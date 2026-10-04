@@ -217,6 +217,11 @@ register plays no part in making video appear.
   output is scaled, the factors are derived from the source and destination sizes.
 - Across a warm reset, the GRFs retain state. The CRU and SECURECRU gate registers reset
   to all zeros, with every gate open, so display bring-up needs no explicit CRU ungating.
+- The window start-address registers, such as `CLUSTER0_WIN0_YRGB_MST` and the Esmart
+  region `MST` registers, are 32 bits wide with no high-address partner [source][TRM].
+  Without its IOMMU, the VOP therefore scans out only from the low 4 GB. Mainline scans
+  out through the VOP's IOMMU (`rockchip,rk3568-iommu`), which maps a 32-bit address space
+  onto 40-bit physical memory [source].
 
 The VP0 block's registers:
 
@@ -368,8 +373,8 @@ entry appears. That is the shape a 340 MHz ceiling predicts.
 
 ## Sources
 
-- [TRM]: Rockchip RK3576 TRM V1.2 Part 2, chapter 24 (HDMI TX Controller) and chapter 25
-  (HDMI TX/eDP Combo PHY).
+- [TRM]: Rockchip RK3576 TRM V1.2 Part 2, chapter 11 (Video Output Processor), chapter 24
+  (HDMI TX Controller) and chapter 25 (HDMI TX/eDP Combo PHY).
 - [REGMAP]: an offset, name and reset-value map of the HDMI QP register file. It is
   generated from the TRM's register summary, with names joined from the vendor headers.
 - The reference unit: an H96 MAX M9, observed live at the register level. Readings are

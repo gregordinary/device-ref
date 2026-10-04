@@ -400,6 +400,10 @@ The GPU power domain must be bound to its `vdd_gpu_s0` supply, or a late Panfros
 faults the unpowered block. The mechanism and the device-tree change are in
 [the GPU power domain needs its supply](corrections-and-gotchas.md#the-gpu-power-domain-needs-its-supply).
 
+The GPU's resources and its register-level bring-up close this section, from
+[Resources](#resources) onward. They serve firmware, bare-metal tests and drivers for other
+operating systems.
+
 ### OpenGL ES
 
 On 7.1.3 with Mesa 26.1.5-1, Panfrost drives OpenGL ES 3.1 and the OpenGL 3.1 core and
@@ -466,6 +470,145 @@ Two further obstacles stand in the way:
 ffmpeg's filtering on this SoC therefore runs on the CPU, at either bit depth. OpenGL ES
 is unaffected: Panfrost drives GLES 3.1 on the same GPU.
 
+### Resources
+
+The TRM and `rk3576.dtsi` give the GPU's SoC resources [source][TRM]:
+
+| Resource | Value |
+| --- | --- |
+| Register window | `0x27800000`, 128 KB |
+| Interrupts | `job`, `mmu` and `gpu` on SPI 347, 348 and 349, which are GIC IDs 379, 380 and 381 |
+| Power domain | `RK3576_PD_GPU`, which the TRM names VD_GPU |
+| Supply | `vdd_gpu_s0` |
+| Clocks | `CLK_GPU` for the core. The power domain also takes `PCLK_GPU_ROOT` |
+| GPU PVTPLL | `0x27268000`, 32 KB |
+| Configuration | Three shader cores and a 256 KB L2 |
+
+The TRM names the core Mali-Gondul r1p0 and refers its register description to Arm's
+technical reference manual for that core. It also lists `irq_gpu_event` at GIC ID 378,
+which `rk3576.dtsi` does not wire. An ACPI table names an interrupt by its GSIV, which
+equals the GIC ID, so a DSDT gives the GPU 379 to 381.
+
+Every mainline RK3576 board tree that names `vdd_gpu_s0` puts it on the RK806's DCDC5
+[source]. Panfrost reports `mali-g52 id 0x7402 major 0x1 minor 0x0`, and the vendor
+kernel's `mali` driver reports architecture 7.4.0, r1p0 [measured].
+
+### Power-up at register level
+
+On Linux, the regulator, clock and power-domain frameworks bring the GPU up before
+Panfrost touches it. Firmware, a bare-metal test or a driver for another operating system
+performs the same steps itself: the rail, then the clock, then the domain. The
+`gahingwoo/edk2-rk3576` UEFI firmware performs all three before it boots Windows
+[reported][WDDM]. It publishes the GPU as the ACPI device `RKCP7402`.
+
+Enable `vdd_gpu_s0` first. The TRM's VD_GPU power-on procedure requires the rail to be
+stable before the domain powers on [source][TRM]. On Linux with no GPU driver bound, the
+regulator core disables the rail as unused, 30 s after its late initcall [source]. The
+`regulator_ignore_unused` boot parameter keeps the rail up for a test with Panfrost
+unbound.
+
+Every CRU and PMU register below takes a write-enable mask in bits 31:16. To change bit n,
+a write also sets bit n+16 [source][TRM].
+
+### The GPU clock
+
+The GPU clock leaves the CRU (`0x27200000`) through `CRU_CLKSEL_CON165`, at offset `0x594`
+[source][TRM]:
+
+| Bits | Field | Selects |
+| --- | --- | --- |
+| 9 | `clk_gpu_pvtpll_src_sel` | 0: `clk_deepslow`. 1: the GPU PVTPLL |
+| 8 | `clk_gpu_inner_sel` | 0: the PLL path. 1: the PVTPLL path |
+| 7:5 | `clk_gpu_src_pre_sel` | The PLL: 0 GPLL, 1 CPLL, 2 AUPLL, 3 SPLL, 4 LPLL |
+| 4:0 | `clk_gpu_src_pre_div` | Divides the PLL path by the field plus 1 |
+
+The register resets to `0x40`: the PLL path, from AUPLL, undivided. `rk3576.dtsi` sets
+GPLL to 1188 MHz and asks for the GPU at 198 MHz, which is GPLL divided by 6. The divider
+field then reads 5.
+
+Under TF-A, the GPU rate belongs to TF-A's SCMI clock service, which Linux reaches as
+`SCMI_CLK_GPU` [source][TFA]. TF-A serves 300 to 900 MHz from the GPU PVTPLL, setting bits
+9 and 8. Its 200 MHz entry has no PVTPLL setting. For that rate TF-A writes the divider
+for GPLL divided by 6, selects GPLL, then clears bit 8. Firmware that programs the clock
+directly gets 198 MHz from the same three writes.
+
+`CRU_GATE_CON69`, at offset `0x914`, gates `clk_gpu_src_pre` (bit 1), `clk_gpu` (bit 3) and
+`pclk_gpu_root` (bit 8) [source][TRM]. A set bit gates the clock, and all three reset
+open. Mainline enables `CLK_GPU` and `PCLK_GPU_ROOT` around every GPU domain transition,
+because the domain node lists both [source].
+
+### Powering the GPU domain
+
+The domain's registers sit in the PMU at `0x27360000` [source][TRM]. Mainline maps the
+window from `0x27380000`, the `power-management@27380000` node, so the pmdomain driver's
+offsets are these less `0x20000`. `pd_gpu_dwn_sftena` resets to 1, so the GPU is powered
+down out of reset.
+
+The mainline pmdomain driver powers the domain up in this order [source]:
+
+| Step | Register | Offset | Bit | Action |
+| --- | --- | --- | --- | --- |
+| 1 | `PMU_BIU_GATMASK_SFTCON0` | `0x20140` | 0 | Set: software controls the GPU bus-interface clock during the idle handshake |
+| 2 | `PMU_PWR_GATE_SFTCON1` | `0x20214` | 9 | Clear: power VD_GPU up |
+| 3 | `PMU_PWR_GATE_STS` | `0x20230` | 25 | Wait for 0, powered up |
+| 3 | `PMU_BISR_PWR_REPAIR_STATUS0` | `0x20570` | 25 | Wait for 1, powered up with memory repair complete |
+| 4 | `PMU_BIU_IDLE_SFTCON0` | `0x20110` | 0 | Clear: withdraw the idle request to the GPU bus interface |
+| 5 | `PMU_BIU_IDLE_ACK_STS` | `0x20120` | 0 | Wait for 0 |
+| 5 | `PMU_BIU_IDLE_STS` | `0x20128` | 0 | Wait for 0 |
+
+Mainline polls only the repair-status bit at step 3, because its GPU domain entry names no
+power-status mask. After step 5 it restores the GPU QoS registers, then clears the
+gate-mask bit again.
+
+Any access to a GPU register before the idle acknowledge clears takes an asynchronous
+SError [reported][WDDM]. The same abort follows a soft reset written to a domain that never
+powered, as [the GPU power-domain entry](corrections-and-gotchas.md#the-gpu-power-domain-needs-its-supply)
+records [measured].
+
+### A first job without a driver stack
+
+With the domain up, the rest is Mali Bifrost job-manager programming, common to every
+Bifrost GPU. Panfrost and the kernel's Mali LPAE page-table code are the source of each
+value below [source]. A first job takes five steps:
+
+1. Soft-reset the GPU with `GPU_CMD_SOFT_RESET`, and wait for `RESET_COMPLETED` in the raw
+   interrupt status.
+2. Power the L2, then the shader cores, then the tiler. Write each `*_PRESENT` mask to its
+   `*_PWRON` register, and wait for `*_READY` to match.
+3. Program address space 0 with the values below, then issue `AS_COMMAND_UPDATE`.
+4. On job slot 0, write the job chain address to `JS_HEAD_NEXT` and `SHADER_PRESENT` to
+   `JS_AFFINITY_NEXT`.
+5. Write `0x00083300` to `JS_CONFIG_NEXT`, then `JS_COMMAND_START` to `JS_COMMAND_NEXT`.
+
+The `JS_CONFIG_NEXT` word selects address space 0 and thread priority 8. It also flushes
+the caches with a clean and invalidate at both the start and the end of the job. The
+sequence runs a `WRITE_VALUE` job with no MMU fault, both from Linux userspace through
+`/dev/mem` and from a Windows kernel driver [reported][WDDM].
+
+`rockchip,rk3576-mali` falls through to Panfrost's generic `arm,mali-bifrost` entry, which
+keeps the Mali LPAE page-table format rather than the AArch64 one [source]. The address
+space then takes these values:
+
+| Register | Value | Meaning |
+| --- | --- | --- |
+| `AS_TRANSTAB` | Level-0 table address ORed with `0x7` | `0x3` is the table address mode, `0x4` the read-inner bit |
+| `AS_MEMATTR` | `0x888d88` | Attributes 0 and 2 implementation-defined (`0x88`), attribute 1 write-allocate (`0x8d`) |
+| `AS_TRANSCFG` | `0` | The legacy address mode |
+
+The format always walks four levels, from level 0. A table descriptor is the next table's
+physical address ORed with `0x3`. A leaf is the page's physical address ORed with `0x2c5`:
+
+| Bits | Value | Meaning |
+| --- | --- | --- |
+| 1:0 | `0x1` | Type 1 at every level, level 3 included |
+| 4:2 | `0x4` | Attribute index 1 |
+| 7:6 | `0xc0` | Read and write permission |
+| 9:8 | `0x200` | Outer shareable |
+| 10 | `0` | The access flag stays clear |
+
+The format addresses 40 bits of physical memory [source]. Page tables and a job above 4 GB,
+at `0x1_2e41a000`, run without fault [reported][WDDM].
+
 ## Encode
 
 Mainline has no encoder driver for this SoC, and one is in flight upstream [VEPU510].
@@ -508,6 +651,13 @@ Settling it needs the Fluster conformance suite on an RK3576 board.
 ## Sources
 
 - [DTB]: the H96 MAX M9 factory device tree, decompiled.
+- [TRM]: the Rockchip RK3576 TRM V1.2, Part 1: the address map and interrupt table
+  (chapter 1), the CRU (chapter 2), the GPU (chapter 4) and the PMU (chapter 6).
+- [TFA]: upstream TF-A, `plat/rockchip/rk3576`, as of 2026-10-02: the SCMI clock service
+  in `scmi/rk3576_clk.c`.
+- [WDDM]: the `gahingwoo/wddm-mali-g52` repository on GitHub, a Windows WDDM driver for
+  this GPU, and its `docs/PLAN.md`. Its results were taken on an ArmSoM CM5-IO under the
+  `gahingwoo/edk2-rk3576` UEFI firmware, 2026-10-01 to 2026-10-03.
 - [VEPU510]: the linux-media thread on `[RFC PATCH 0/3] media: rockchip: VEPU510 H.264
   encoder for RK3576` (2026-07-22).
 - The vendor kernel's VDPU383 programming: `rockchip-linux/kernel`, branch `develop-6.1`,
@@ -515,4 +665,7 @@ Settling it needs the Fluster conformance suite on an RK3576 board.
 - The PanVk Bifrost refusal: Mesa `panvk_physical_device.c`, 26.1.6 and main.
 - VDPP: the MPP userspace tree, `vdpp2_reg.h` and the `vdpp2_*` implementation.
 - Mainline kernel sources: `rkvdec.c`, `rkvdec-rcb.c`, `rockchip_drm_vop2.c` and
-  `v4l2-ctrls-core.c`.
+  `v4l2-ctrls-core.c`. For the GPU: `rk3576.dtsi` and the board trees,
+  `drivers/pmdomain/rockchip/pm-domains.c`, `drivers/clk/rockchip/clk-rk3576.c`,
+  `drivers/regulator/core.c`, `drivers/gpu/drm/panfrost/` and
+  `drivers/iommu/io-pgtable-arm.c`, at 7.2.8.

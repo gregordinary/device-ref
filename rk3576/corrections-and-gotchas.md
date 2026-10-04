@@ -19,8 +19,10 @@ RK3576 SFC domains show upstream.
 `RK3576_PD_GPU` is fed by the GPU rail, which is `vdd_gpu_s0` (an RK806 buck) on the
 reference unit. The Rockchip pmdomain driver marks the RK3588 GPU domain as needing a
 regulator and leaves the RK3576 GPU domain unmarked [source]. The pmdomain core therefore
-powers the RK3576 domain without first enabling the rail. The rail is `regulator-boot-on`
-and not always-on, so the regulator core's late-initcall pass disables it as unused.
+powers the RK3576 domain without first enabling the rail. The TRM's VD_GPU power-on
+procedure requires the rail to be stable first [source][TRM]. The rail is
+`regulator-boot-on` and not always-on, so the regulator core disables it as unused, 30 s
+after its late initcall [source].
 
 When Panfrost is built as a module, it can probe after that pass. A late probe powers the
 domain against a dead rail, and the power controller never acknowledges:
@@ -305,3 +307,4 @@ version where it matters. The citation keys are:
   are serial-console captures of the reference unit, the High Speed cap among them.
 - [HDG]: Rockchip's RK3576 Hardware Design Guide V1.1, summarized in
   [the hardware design guide notes](hardware-design-guide.md).
+- [TRM]: the Rockchip RK3576 TRM V1.2, Part 1, chapter 6 (PMU).

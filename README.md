@@ -1,25 +1,14 @@
 # device-ref
 
-Hardware reference for a set of Rockchip SoCs, board families and boards. Each
-document is written the way a vendor's reference manual is written. It states what the
-hardware is and does, and what an engineer integrating an operating system onto it has to
-know.
-
-The raw evidence these documents cite, such as boot captures, factory firmware and
-datasheets, is kept outside this repository. The documents here are the curated statement
-of it.
+Hardware reference for a set of Rockchip SoCs, board families and boards.
 
 ## Layout
 
-The tree is ordered SoC, then family, then board:
+The tree is ordered by SoC > Family > Board:
 
-- An SoC folder holds the documents that hold for every board on that SoC.
-- A family folder appears only where several boards share documents, as the Veyron
-  Chromebooks do.
-- A board folder holds what is true of that board alone.
-
-A fact lives at the widest level it is true at, and the narrower documents link to it.
-`PROFILE.md` names the owner of each fact that several documents touch.
+- SoC folders hold the documents that hold for every board on that SoC.
+- Family folders appear only where several boards share documents, e.g., the Veyron Chromebooks.
+- Board folders holds what is true of that board alone.
 
 ## Documents
 
@@ -65,9 +54,3 @@ A fact lives at the widest level it is true at, and the narrower documents link 
 Every claim carries its grade: `[measured]`, `[source]`, `[consensus]`, `[reported]`,
 `[inferred]` or `[expected]`. `PROFILE.md` defines each one. A named source is cited by
 an uppercase key, which the document defines in its closing **Sources** section.
-
-## Style
-
-The prose follows a portable style guide, refined for this tree by `PROFILE.md`. A prose
-linter holds the countable half of it: sentence and paragraph length, punctuation, list
-form, and the fixed terms in the profile.

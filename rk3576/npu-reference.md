@@ -32,20 +32,22 @@ buffer (CBUF) is read through `PD_NPU1` whichever core computes. `rocket` attach
 whatever domains the node lists, so a trimmed node runs half fed rather than refusing to
 probe. The binding is what pins the count at two.
 
-On the vendor kernel the NPU runs the RKNPU2 stack. `rocket` is a CNN accelerator driver
-with no matmul path, so it does not serve LLM inference. The RK3576 register map is
-shifted and re-packed relative to the RK3588, so a userspace needs its own RK3576 encoder.
-No released userspace carries one [source].
+On the vendor kernel the NPU runs the RKNPU2 stack. `rocket` is a generic register-command
+submitter: the kernel runs whatever program userspace hands it [source][NOTES]. A matmul
+runs as a 1×1 convolution on the same program a convolution uses. The RK3576 register map
+is shifted and re-packed relative to the RK3588, so a userspace needs its own RK3576
+encoder.
 
-[`rocket-userspace`](https://github.com/gregordinary/rocket-userspace), a public RK3588
-userspace, is bit-exact on the RK3588 and names the
-RK3576 as its next target. Its machine parameters (CBUF size, core count, datatype mask)
-need confirming on the RK3576 first. The only posted RK3576 encoder is Mesa MR !43804
-(Jiaxing Hu, open since 2026-08-17, unmerged) [source]. It handles regular uint8
-convolutions only and stays within one count of a CPU reference on a Radxa ROCK 4D. It
-declines depthwise, pointwise and image convolutions of up to four channels to the CPU.
+[`rocket-userspace`](https://github.com/gregordinary/rocket-userspace), a public userspace,
+carries an RK3576 encoder beside its RK3588 one. On the reference unit it computes
+convolutions, matmuls, pooling and the DPU's lookup-table activations bit-exactly through
+`rocket` [measured][NOTES]. The other posted RK3576 encoder is Mesa MR !43804 (Jiaxing Hu,
+open since 2026-08-17, unmerged) [source]. It handles regular uint8 convolutions only, and
+stays within one count of a CPU reference on a Radxa ROCK 4D. It declines depthwise,
+pointwise and image convolutions of up to four channels to the CPU.
 
-Mainline therefore delivers an NPU device on the RK3576, not an inference stack.
+The register encoding, its validation and the model results live in rockchip-npu-notes
+[NOTES]. This page keeps to the hardware and the driver contract.
 
 ## The NPU rail
 
@@ -267,3 +269,7 @@ series, or the Mesa merge request it cites. The citation keys are:
 - [OPP]: the operating-point experiment. Its device trees run both cores at 786 or 594 MHz,
   and 786 MHz at 800 and 850 mV. It also records the composite-clock rate note.
 - [TRM]: the Rockchip RK3576 TRM V1.2, Part 1 and Part 2.
+- [NOTES]: rockchip-npu-notes (`https://github.com/gregordinary/rockchip-npu-notes`) at
+  commit `b4efde2` (2026-10-10): `README.md` for the driver model, and `chips/README.md`,
+  `chips/rk3576.md` and `chips/rk3576-regcmd.md` for the RK3576 encoder and what it
+  computes.

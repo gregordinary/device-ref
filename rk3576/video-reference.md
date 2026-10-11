@@ -210,11 +210,13 @@ the CPU, and nothing on this part converts it in silicon.
 | RGA2 | Input only. It can read `NV15` and has no 10-bit surface to write |
 | VDPP | No. Its pixel path is NV12 and NV21 only. See [VDPP](#vdpp) |
 | `hwdownload` and swscale (CPU) | Yes. `format=yuv420p10le` unpacks it, given an ffmpeg that knows `NV15` |
-| Vulkan, Mesa GL and EGL, mpv | No. Vulkan has no 10-bit packed 4:2:0 format at all |
+| Vulkan | No. Vulkan has no 10-bit packed 4:2:0 format at all |
+| Mesa GL and EGL | Yes, from Mesa 25.0. The DRI frontend imports `DRM_FORMAT_NV15`, and panfrost samples it as a native 10-bit YUV texture from architecture 7, the G52's, onward [source]. Not measured on the reference unit |
 
 10-bit playback through a KMS plane therefore needs no conversion, because VOP2 scans
-`NV15` out directly. Filtering or transcoding 10-bit content unpacks it on the CPU, and
-that is the only route.
+`NV15` out directly. Filtering or transcoding 10-bit content through ffmpeg unpacks it on
+the CPU. A GL consumer that samples `NV15` through EGL is the one GPU route, and it is
+untested on this part [expected].
 
 ### The ffmpeg build
 
@@ -643,10 +645,13 @@ memory costs far more than decoding them.
 
 The kernel exposes `hevc_short_term_ref_sets` and `hevc_long_term_ref_sets`, and an ffmpeg
 that sets the SPS reference-picture-set controls populates exactly those. On the RK3588,
-leaving them unset costs 15 of 147 HEVC conformance streams. On this SoC their effect is
-unproven. Synthetic x265 content does not expose the gap: clips encoded with
-`bframes=8 b-pyramid ref=6 open-gop` decode bit-exact with or without the controls set.
-Settling it needs the Fluster conformance suite on an RK3576 board.
+ffmpeg passes 141 of 147 HEVC conformance streams with them set, the same as software
+decode. With them unset it passes 15. The scores are in the [RK3588 video
+reference](../rk3588/video-reference.md#conformance).
+
+On this SoC their effect is unproven. Synthetic x265 content does not expose the gap: clips encoded
+with `bframes=8 b-pyramid ref=6 open-gop` decode bit-exact with or without the controls
+set. Settling it needs the Fluster conformance suite on an RK3576 board.
 
 ## Sources
 
@@ -663,6 +668,9 @@ Settling it needs the Fluster conformance suite on an RK3576 board.
 - The vendor kernel's VDPU383 programming: `rockchip-linux/kernel`, branch `develop-6.1`,
   `mpp_rkvdec2.c`.
 - The PanVk Bifrost refusal: Mesa `panvk_physical_device.c`, 26.1.6 and main.
+- `NV15` through EGL: Mesa `src/gallium/frontends/dri/dri_helpers.c` and
+  `src/panfrost/lib/pan_format.c`, present on the 25.0 and 26.1 branches and on main
+  (2026-09-28), absent on 24.2.
 - VDPP: the MPP userspace tree, `vdpp2_reg.h` and the `vdpp2_*` implementation.
 - Mainline kernel sources: `rkvdec.c`, `rkvdec-rcb.c`, `rockchip_drm_vop2.c` and
   `v4l2-ctrls-core.c`. For the GPU: `rk3576.dtsi` and the board trees,

@@ -23,13 +23,13 @@ lists the orders. The BootROM reads the ID block (idbloader) at sector 64, marke
 download, which is maskrom. Holding the eMMC clock at ground at power-on forces that
 fall-through on an eMMC-strapped board [measured].
 
-rkbin ships one unified DDR loader for the SoC,
-`rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.12.bin`, which covers LPDDR4, LPDDR4X and LPDDR5.
+rkbin ships one unified DDR loader for the SoC, at v1.13
+`rk3576_ddr_lp4_2112MHz_lp5_2736MHz_v1.13.bin`, which covers LPDDR4, LPDDR4X and LPDDR5.
 There is no separate DDR4 file. 2112 MHz is the loader's native LPDDR4X target.
 
-rkbin's newest RK3576 BL31 is v1.24. The reference unit's vendor firmware runs BL31 v1.09
-with OP-TEE. Under mainline u-boot the reference unit runs rkbin BL31 v1.24 without
-OP-TEE.
+rkbin's newest RK3576 BL31 is v1.25. The reference unit's vendor firmware runs BL31 v1.09
+with OP-TEE. Under mainline u-boot the reference unit runs rkbin BL31 v1.24 and DDR
+firmware v1.12, without OP-TEE. Every BL31 measurement on this page is v1.24's.
 
 ## OP-TEE and BL32
 
@@ -230,12 +230,18 @@ in `tick_check_broadcast_expired` or `cpu_idle_poll`. The kernel logs
 recover. Where `ARM_PSCI_CHECKER` hammers the state at boot, the result is a hard hang.
 
 The vendor firmware chain, BL31 v1.09 with OP-TEE, showed none of this in its test window.
-rkbin's newest RK3576 BL31 is v1.24, so no firmware upgrade path exists. The boot log
-carries the fingerprint of the v1.24-without-OP-TEE condition:
+rkbin's BL31 v1.25 keeps v1.24's program headers, and its disassembly shows no change to
+the idle, suspend or reboot-mode paths [inferred][BLOB]. It is not measured on the
+reference unit, and offers no known way out. The boot log
+carries the fingerprint of a chain without OP-TEE:
 
 ```
 psci: MIGRATE_INFO_TYPE not supported
 ```
+
+Linux prints it under any BL31 that runs without OP-TEE, whatever its version, as
+[PSCI](../rk3588/boot-firmware.md#psci) describes. On the reference unit it marks the
+v1.24-without-OP-TEE condition, the one chain there that runs without OP-TEE.
 
 ### Mitigations
 
@@ -270,7 +276,8 @@ resumes [measured]. Dropping the flag needs a multi-hour soak plus a suspend cyc
 
 ## Sources
 
-- [BLOB]: a disassembly of rkbin `rk3576_bl31_v1.24.elf`.
+- [BLOB]: a disassembly of rkbin `rk3576_bl31_v1.24.elf`, and its comparison with
+  `rk3576_bl31_v1.25.elf`.
 - Source reading: the mainline Linux 7.1 and u-boot v2026.04 trees, with their driver and
   binman code, and upstream TF-A.
 - Alexey Charkov's RK3576 reboot-mode series (v1, 2026-09-28, unmerged): the two-register

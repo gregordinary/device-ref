@@ -16,10 +16,10 @@ detect the hardware-configured voltage, so there is no need for software configu
 [HDG 2.1.11.4]. `PMUIO0` and `VCCIO0` are fixed at 1.8 V and not configurable at all.
 `VCCIO7` is 1.2 V or 1.8 V.
 
-This differs from the RK3588, where a missing or mis-valued `&io_domains` node is a
-routine cause of dead peripherals and marginal signaling. On the RK3588 its absence from a
-board `.dts` is a warning sign. On the RK3576 a board `.dts` correctly carries no
-IO-domain node, and its absence explains no peripheral fault.
+Mainline carries no IO-domain support for the RK3588 either. Linux 7.2.9's `io-domain.c`
+matches no RK3588 compatible, and no mainline RK3588 board tree carries an IO-domain node
+[source]. On either SoC a mainline board `.dts` correctly carries none, and its absence
+explains no peripheral fault.
 
 What still matters to software is which domain a pin's mux alternative sits in, because
 that fixes the pin's signaling voltage. The alternatives are not interchangeable, and
@@ -181,5 +181,7 @@ defers configuration to an SDK document.
 
 - [HDG]: Rockchip, RK3576 Hardware Design Guide V1.1, 2024-05-28, cited by section number.
   `pdftotext -layout` extracts the PDF.
+- Linux at tag `v7.2.9`: `drivers/soc/rockchip/io-domain.c` and the RK3588 board trees,
+  `arch/arm64/boot/dts/rockchip/rk3588*.dts*`.
 - The reference unit: an H96 MAX M9. The combo PHY 1 log line and the SError on removing
   that PHY from `phys` are measured on it.

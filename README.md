@@ -47,7 +47,7 @@ The tree is ordered by SoC > Family > Board:
 
 | Document | Subject |
 |---|---|
-| [`rk3588/video-reference.md`](rk3588/video-reference.md) | Decode, encode, RGA, the GPU and the HDMI receiver |
+| [`rk3588/video-reference.md`](rk3588/video-reference.md) | Decode, encode, RGA, the GPU, the HDMI receiver and what a transcode costs |
 
 ## Evidence
 

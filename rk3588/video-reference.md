@@ -1,7 +1,8 @@
 # RK3588 video, 2D and GPU reference
 
 This page covers the RK3588's media blocks under a mainline kernel: decode, encode, RGA,
-the GPU, the HDMI receiver and the DDR traffic counters. It states which of them mainline
+the GPU, the HDMI receiver and the DDR traffic counters. It also states what a transcode
+costs on them. It states which of them mainline
 userspace can reach, and the traps an integrator meets on the way. The scope is the SoC.
 Everything here follows from `rk3588.dtsi` and the shared drivers rather than from one
 board.
@@ -23,7 +24,14 @@ The SoC presents four V4L2 codec nodes, one per job [measured, 2026-08-09, 7.1.1
 | `/dev/video0` | `rkvdec` | `rkvdec` | `S265`, `S264`, `VP9F` (stateless slice data) | `NV12`, and `NV15` for 10-bit |
 | `/dev/video1` | `hantro-vpu` | `rockchip,rk3568-vpu-dec` | `S264`, `MG2S`, `VP8F` | `NV12` |
 | `/dev/video2` | `hantro-vpu` | `rockchip,rk3588-vepu121-enc` | `YM12`, `NM12`, `YUYV`, `UYVY` | `JPEG` |
-| `/dev/video3` | `hantro-vpu` | `rockchip,rk3588-av1-vpu-dec` | `AV1F` | `VT12` (4×4 tiled), `NV12` |
+| `/dev/video3` | `hantro-vpu` | `rockchip,rk3588-av1-vpu-dec` | `AV1F` | `VT12` (4×4 tiled), `NV12`, and for 10-bit a 4×4 tiled `NV15`, `NV15` and `P010` |
+
+The 10-bit capture formats on `/dev/video3` come from the driver's format lists [source,
+7.2.9]. The `v4l2request` hwaccel negotiates `NV15` there, and `hwdownload,format=p010le`
+on an AV1 frame is refused, so `P010` goes unused [measured].
+
+Node numbers follow probe order. A kernel that also binds the in-tree RGA driver adds V4L2
+nodes for the RGA, and the codec nodes can then take other numbers (see [RGA](#rga)).
 
 Three facts about this inventory are easy to overlook, and each changes a conclusion:
 
@@ -41,6 +49,25 @@ The SoC has four VEPU121 JPEG encoder cores, at `fdba0000` to `fdbac000`, and th
 dtsi describes all four. The driver registers the first and logs `missing multi-core
 support, ignoring this instance` for the rest [measured, 2026-08-31, 7.2.2].
 
+### Kernel configuration
+
+arm64's defconfig builds some of these drivers and leaves others out [source, 7.2.9]:
+
+| Symbol | Driver | In the defconfig |
+| --- | --- | --- |
+| `CONFIG_VIDEO_HANTRO` | `hantro-vpu`: VDPU2, the JPEG encoder and the AV1 decoder | Module |
+| `CONFIG_VSI_IOMMU` | The AV1 decoder's IOMMU | Not set, and the symbol has no default |
+| `CONFIG_VIDEO_ROCKCHIP_VDEC` | `rkvdec` | Not set |
+| `CONFIG_ROCKCHIP_IOMMU` | The other media blocks' IOMMUs | Built in |
+| `CONFIG_VIDEO_ROCKCHIP_RGA` | `rockchip-rga` | Module |
+| `CONFIG_DRM_PANTHOR` | The GPU | Module |
+| `CONFIG_DRM_ACCEL_ROCKET` | The NPU | Not set |
+
+The AV1 decoder sits behind its own IOMMU, `iommu@fdca0000`
+(`rockchip,rk3588-av1-iommu`, `verisilicon,iommu-1.2`), which `vsi-iommu` drives
+[source, 7.2.9]. Without `CONFIG_VSI_IOMMU` the AV1 decoder fails at probe [measured]. A
+kernel built from the defconfig alone therefore decodes on VDPU2 only [inferred].
+
 ### The rkvdec cores
 
 `rkvdec` runs two cores behind one node. With Collabora's unmerged rkvdec multicore series
@@ -48,6 +75,26 @@ applied, `fdc38000` and `fdc40000` both register and bind to one master. That ma
 presents a single `/dev/video0`, so two V4L2 decoder nodes mean the component binding
 failed. With both cores bound, four concurrent 4K H.264 streams decode at realtime, and
 tiled HEVC conformance stays bit-exact [measured].
+
+The series schedules one job per m2m context, so each core decodes a different stream
+[source]. A single stream never uses both cores. Aggregate throughput doubles at the second
+stream and stays flat after it. Decode only, with frames kept as DRM PRIME
+[measured, 2026-08-13, 7.1.7, and the 1080p row 2026-10-07, 7.2.9]:
+
+| Stream | One stream | Aggregate ceiling | Concurrent at realtime |
+| --- | ---: | --- | --- |
+| 1080p H.264, 10 Mb/s | 9.21x | 18.2x | 6 tested, at 3.03x each |
+| 4K H.264 | 2.51x | 4.9x, from three streams | 4, and a fifth runs at 0.98x |
+| 4K HEVC 10-bit | 2.95x, on 7.2.9 | 5.5x, at two streams | 2 (see [the RCB SRAM IOVA collision](#the-rcb-sram-iova-collision)) |
+
+Two streams of 4K H.264 still run at 2.40x each, against 2.51x for one. The second stream
+therefore takes the second core rather than half of the first. Figures that repeat need the
+CPU governor at `performance`. Under `ondemand` the cores sat at 1.2 GHz [measured].
+
+VDPU2 is a single core. It decodes one 1080p H.264 stream at 3.15x and holds that total,
+about 94 frames per second, however many streams share it [measured, 2026-10-07, 7.2.9].
+Both decoders cost 0.4-0.8 CPU-s per 30 s stream. Which node a stream lands on therefore
+sets the 1080p H.264 ceiling, as [attributing a failure](#attributing-a-failure) describes.
 
 The series splits the driver around `struct rkvdec_core`. A change touching that
 structure applies only to a kernel carrying the series. An rkvdec fix therefore does not
@@ -84,11 +131,12 @@ bound the payoff:
 - IEP2 takes NV12 8-bit in, writes NV12 8-bit out and is capped at 1080, so it cannot
   process 10-bit content.
 - With no IEP driver, `bwdif` deinterlaces on the CPU at 0.93 CPU-s per second of 1080i
-  content [measured]. That is 2.84 of 8 cores at realtime, about 1.35x what hardware
-  decode saves, while 576i costs ~0.2 cores.
+  content [measured], about 1.35x what hardware decode saves. A whole 1080i to 1080p60
+  transcode costs about 1.1 cores per realtime stream, against 0.15 without
+  deinterlacing. 576i costs ~0.2 cores.
 
-`bwdif_vulkan` produces correct fields but costs the same CPU at a third of the
-throughput, and `yadif` is strictly worse. The cost case for an IEP2 port is weak. A port
+`bwdif_vulkan` produces correct fields but costs the same CPU at about a seventh of the
+throughput (15.4 against 110 fps), and `yadif` is strictly worse. The cost case for an IEP2 port is weak. A port
 also leaves a kernel client and an ffmpeg filter to maintain against a moving kernel.
 
 ### Formats with no stateless uAPI
@@ -118,6 +166,14 @@ Measured through an ffmpeg build carrying the `v4l2request` hwaccel [measured,
 | --- | --- | --- |
 | HEVC Main (8-bit) | `NV12` | 0 |
 | HEVC Main 10 | `NV15` | 0 |
+| VP9 profile 0 | `NV12` | 0 |
+| VP9 profile 2 | `NV15` | 0 |
+
+The VP9 rows are from 2026-08-30 on 7.2.2. VP9's bit depth can change at any frame, and
+the capture format follows it mid-stream. Both profiles are bit-exact against `libvpx` over
+120 frames, and the kernel log stays clean over all 305 conformance vectors [measured,
+2026-08-30, 7.2.2]. The hardware has no VP9 profile 1 or 3, and the profile control
+refuses them [source].
 
 ## Resolution ceilings
 
@@ -141,6 +197,11 @@ needs no driver change.
 AV1 is the exception, because its cap is a driver constant: 4096×2304 in the mainline
 driver. Raising the AV1 decoder's frame-size cap to 8192×4352 is enough, and decode is
 bit-exact at exactly that size (see [AV1 decode](#av1-decode)).
+
+The cap sits in two format lists: the tiled formats (`NV12_4L4`, `NV15_4L4`) and the
+post-processor's `rockchip_vpu981_postproc_fmts[]` [source, 7.2.9]. `hantro_try_fmt()`
+applies the capture format's limits. A cap raised in one list alone therefore returns
+4096×2304, with no error [measured, 2026-09-02].
 
 ### The RCB SRAM IOVA collision
 
@@ -185,6 +246,11 @@ The consequence that matters is concurrency rather than 8K. The collision caps a
 workload whose cumulative IOVA demand descends far enough. Three concurrent 8K streams
 trip it, and many-stream 4K work is exposed to it as well.
 
+Without the change, three concurrent 4K HEVC 10-bit decodes already fail. The kernel logs
+`dma alloc of size 19701760 failed`, and aggregate throughput falls below one stream's
+[measured, 2026-08-13, 7.1.7]. The signature fits this collision [inferred]. Three or more
+4K 10-bit streams are not measured with the change.
+
 When changing this code, confirm that the SRAM path still serves the RCB. A fallback to
 `dma_alloc_coherent` also makes the collision vanish, for the wrong reason and at a
 performance cost. To trace an RCB allocation, decode something wider than anything
@@ -194,15 +260,19 @@ decoded since boot. The RCB only ever grows, and the driver frees it only on rem
 
 Each score is read against a software decode on the same unit, and the failures software
 shares are subtracted. What remains is attributable to the driver [measured, 2026-08-31
-and 2026-09-02, 7.2.2].
+and 2026-09-02, 7.2.2, the VP9 row 2026-08-30, 7.2.2, and the H.264 rows 2026-10-07,
+7.2.9].
 
 | Suite | Node | Score | Residual |
 | --- | --- | --- | --- |
-| `JCT-VC-HEVC_V1` | rkvdec | 146/147 via GStreamer, 141/147 via ffmpeg | The one GStreamer miss, `TSUNEQBD_A_MAIN10` (unequal luma and chroma depth), fails in software too. The ffmpeg gap is in userspace: the `v4l2request` hwaccel must set the HEVC SPS-level RPS controls, and one that does closes it |
-| `JVT-AVC_V1` | rkvdec | 128/135 raw via ffmpeg. Control-subtracted, the failures are upstream's 129/135 set | The six known upstream failures: FMO x3, SP x2, `CVFC1` crop offsets |
-| `JVT-AVC_V1` | VDPU2 | 129/135 | The same failure set |
-| `JVT-FR-EXT` | rkvdec | 65/69 | 4:2:2 8-bit and 10-bit (`NV16`, `NV20`) decode correctly. Fails: monochrome x2 (no capture format), MBAFF 4:2:2 x2 |
+| `JCT-VC-HEVC_V1` | rkvdec | 146/147 via GStreamer, 141/147 via ffmpeg | The one GStreamer miss, `TSUNEQBD_A_MAIN10` (unequal luma and chroma depth), fails in software too. Software ffmpeg also scores 141/147. Four of the ffmpeg misses fail in software as well. `CONFWIN_A_Sony_1` and `DELTAQP_A_BRCM_4` fail in hardware only, and pass under GStreamer, so they lie in the `v4l2request` hwaccel. The 141 needs [the SPS-level RPS controls](#hevc-reference-picture-sets) |
+| `JVT-AVC_V1` | rkvdec | 129/135 via ffmpeg and via GStreamer | Software fails five of the six: FMO x3, SP x2. The sixth, `CVFC1_Sony_C` (left and top crop offsets), is in upstream's published failure set |
+| `JVT-AVC_V1` | VDPU2 | 129/135 via ffmpeg and via GStreamer | The same six |
+| `JVT-FR-EXT` | rkvdec | 65/69 via ffmpeg and via GStreamer | 4:2:2 8-bit and 10-bit (`NV16`, `NV20`) decode correctly. Fails: monochrome x2 (no capture format), MBAFF 4:2:2 x2 |
+| `JVT-FR-EXT` | VDPU2 | 44 of the 46 vectors it accepts | Monochrome x2, as on rkvdec. It refuses the 10-bit and 4:2:2 vectors |
 | `VP8-TEST-VECTORS` | VDPU2 | 59/61, the software score exactly | None attributable |
+| `VP9-TEST-VECTORS` | rkvdec | 188/305 raw, 224/305 attributable | Software ffmpeg fails the same 36 `resize_*` vectors, whose mid-stream size change ffmpeg's harness cannot follow. The 224 matches the score the VDPU381 VP9 series reports upstream |
+| `VP9-TEST-VECTORS-HIGH` | rkvdec | 1/6 | The one pass, `vp92-2-20-10bit-yuv420`, is the only vector in the hardware's reach. The rest are 12-bit or 4:2:2 and 4:4:4 |
 | `AV1-TEST-VECTORS` | VPU981 | 201/242 | See [AV1 decode](#av1-decode) |
 | `MPEG2_VIDEO-MAIN` | VDPU2 | 20/43 raw | Three failure classes, one real defect (see [MPEG-2 on VDPU2](#mpeg-2-on-vdpu2)) |
 
@@ -215,13 +285,50 @@ HEVC row, 146 against 141, is that case. A vector that fails under both, while s
 passes, is the driver's. A 43-vector suite takes about a minute, so this is the default
 second step whenever a score looks wrong.
 
-The node a vector lands on is not obvious. ffmpeg's `v4l2request` picks a node by coded
-format, so `VP8F` and `MG2S` go to VDPU2 automatically. Only H.264 exists on both nodes.
-ffmpeg takes the first match (rkvdec) unless given `-hwaccel_device /dev/media1`.
+The node a vector lands on is not obvious. `VP8F` and `MG2S` exist only on VDPU2, but
+H.264 exists on both nodes. The request-API hwaccel as posted walks the media devices in
+udev's order, sorted by sysfs path, and takes the first that accepts the stream. VDPU2
+(`fdb50000`) sorts before rkvdec (`fdc38000`), so there every 8-bit 4:2:0 H.264 vector up
+to 1920×1088 lands on VDPU2.
+
+An ffmpeg that ranks the decoders by the widest frame size they report for the coded
+format tries rkvdec first, at 65520×65520 against VDPU2's 1920×1088. There every H.264
+vector lands on rkvdec, and VDPU2 takes one only if rkvdec refuses it.
+
+Neither honors `-hwaccel_device`: the hwcontext discards the device string. To score
+one node, hide the other's media node in a private mount namespace, and the probe skips
+it. Hiding `/dev/media0` scores VDPU2, and hiding `/dev/media1` scores rkvdec:
+
+```sh
+unshare -rm sh -c 'mount --bind /dev/null /dev/media0 && exec "$@"' sh ffmpeg ...
+```
+
+`udevadm info -q path -n /dev/mediaN` names the block behind each media node.
 
 GStreamer names the two H.264 decoders as separate elements: `v4l2slh264dec` is VDPU2, and
 `v4l2slvideo0h264dec` is rkvdec. VDPU2 accepts `S264` and `MG2S` from 48×48 to 1920×1088 in
 steps of 16, and `VP8F` from 48×48 to 3840×2160.
+
+### HEVC reference picture sets
+
+The VDPU381 parses each slice header in hardware. A slice can select its short-term
+reference picture set from the SPS by index, so the driver needs the SPS's sets from
+userspace. Two controls carry them, `V4L2_CID_STATELESS_HEVC_EXT_SPS_ST_RPS` and
+`V4L2_CID_STATELESS_HEVC_EXT_SPS_LT_RPS` [source, 7.2.9].
+
+Without the controls, the driver logs `Long and short term RPS not set` and decodes anyway
+[source, 7.2.9]. Inter frames then predict from wrong references, and ffmpeg reports
+success. An ffmpeg that sets neither control scores 15/147 on `JCT-VC-HEVC_V1`, against
+141/147 with both [measured, 2026-08-31, 7.2.2].
+
+Whether a stream needs the controls depends on its encoder. x265 writes each picture's set
+inline in its slice headers (`num_short_term_ref_pic_sets = 0`). Its output therefore
+decodes correctly without them. The HM reference encoder writes SPS-level sets, as the conformance
+vectors do [measured]. `-bsf:v trace_headers` shows which kind a file is.
+
+> **A missing control produces wrong pictures, not an error.** The only sign is one
+> rate-limited kernel warning. Real-world x265 content passes, so test with conformance
+> vectors.
 
 ### MPEG-2 on VDPU2
 
@@ -454,10 +561,11 @@ ffmpeg whose `v4l2request` hwcontext tags the CAPTURE buffer as a real `NV15` fr
 that, `hwdownload,format=nv15` followed by `format=yuv420p10le` brings a 10-bit AV1 frame
 to system memory. The decoder's automatic transfer handles it too.
 
-The RGA filters take the same frames in hardware at any width once the AV1 decoder driver
-pads its stride the way `rkvdec` does. With both changes, 1280-, 1920- and 3840-wide AV1
-10-bit clips blit and download bit-exact against software decode [measured, 2026-08-31,
-7.2.2]. The 65 vectors are not re-scored against AOM's MD5s with that readback. The
+The RGA filters take the same frames in hardware at any width once the AV1 decoder pads
+its capture stride to 64 bytes (see [the 10-bit stride](#the-10-bit-stride)). With both
+changes, 1280-, 1920- and 3840-wide AV1
+10-bit clips blit and download bit-exact against a software decode made on another
+machine [measured, 2026-08-31, 7.2.2]. The 65 vectors are not re-scored against AOM's MD5s with that readback. The
 locally encoded clips stand in for them.
 
 ### Decode cost
@@ -490,10 +598,10 @@ driver change can substitute a friendlier format.
 | Consumer | Takes NV15 |
 | --- | --- |
 | VOP2 display planes | Yes. `rockchip_drm_vop2.c` handles `DRM_FORMAT_NV15`, `NV20` and `NV30` [source] |
-| RGA | Yes. It converts `NV15` to `P010` and `NV20` to `P210`, the one RGA capability nothing in mainline replaces |
+| RGA | Yes, at a stride that is a multiple of 64 bytes (see [the 10-bit stride](#the-10-bit-stride)). It converts `NV15` to `P010` and `NV20` to `P210`, the one RGA capability nothing in mainline replaces |
 | `hwdownload` and swscale | Yes, in an ffmpeg whose hwcontext tags the buffer as a real `NV15` frame. `format=yuv420p10le` then unpacks it on the CPU, which is what feeds a GPU tone mapper |
 | Vulkan and PanVk | No. Vulkan has no 10-bit packed 4:2:0 format |
-| Mesa GL and EGL, mpv | No, per nyanmisaka's `ffmpeg-rockchip` wiki [reported] |
+| Mesa GL and EGL | Yes, from Mesa 25.0. The DRI frontend imports `DRM_FORMAT_NV15`, and panfrost samples it as a native 10-bit YUV texture on this GPU [source][MESA]. Not measured on the reference unit |
 | ffmpeg Vulkan hwcontext | No. Its DRM import table carries no multi-planar YUV fourcc |
 
 Two consequences follow:
@@ -505,6 +613,99 @@ Two consequences follow:
 
 A result from a player such as Kodi or mpv therefore does not transfer to a transcode
 pipeline, because the consumers differ.
+
+## Transcode costs
+
+Hardware decode is the largest lever in a transcode on this SoC. Per stage, in CPU-seconds
+for a 30 s clip of 900 frames [measured, 2026-08-10, 7.1.7]:
+
+| Stage | 1080p HEVC 8-bit to 720p | 4K H.264 8-bit to 1080p |
+| --- | ---: | ---: |
+| Decode, software | 33.30 | 126.76 |
+| Decode, `v4l2request` | 0.63 | 1.81 |
+| Download to system memory | 2.89 | 11.81 |
+| Scale, swscale | 17.38 | 35.98 |
+| Encode, `hevc_rkmpp` or `h264_rkmpp` | ~0 | ~0 |
+
+Hardware decode is 53x cheaper at 1080p and 70x at 4K. Once decode is in hardware, the
+download and the CPU scale are most of what remains. RGA and the GPU take that work over.
+
+### 10-bit
+
+A 10-bit hardware path spends its CPU unpacking `NV15`. For 4K HEVC Main 10, 900 frames
+[measured, 2026-10-07, 7.2.9]:
+
+| Stage | CPU-s | Speed |
+| --- | ---: | ---: |
+| Decode, frames kept as DRM PRIME | 2.21 | 2.95x |
+| Plus the download | 16.2 | 2.09x |
+| Plus `format=yuv420p10le`, the `NV15` unpack | 75.8 | 1.93x |
+| Plus a scale to 1080p `NV12`, in place of the unpack | 95.6 | 1.66x |
+| Software decode alone | 316.2 | 0.60x |
+
+The `NV15` reader in swscale is scalar C, and it takes ~80% of the hardware path's CPU.
+`scale_rkrga` converts `NV15` to `NV12` on the RGA instead, which keeps the unpack off the
+CPU (see [the 10-bit stride](#the-10-bit-stride)).
+
+H.264 High 10 decodes on rkvdec to `NV15`, bit-exact against software over 900 frames
+[measured, 2026-10-07, 7.2.9]. VDPU2 refuses its SPS during the probe, and logs
+`Failed to set 1 control(s): Invalid argument (22)` once. 10-bit AV1 from SVT-AV1 matches
+both libdav1d and libaom on all 900 frames.
+
+### HDR tone mapping
+
+The cheapest HDR10 to SDR route scales on RGA first, then tone maps in libplacebo
+[measured, 2026-08-30, 7.2.2]. The filter chain runs `scale_rkrga`, then
+`hwdownload,format=nv15,format=yuv420p10le`, then `libplacebo`, with no `hwupload`:
+
+| Clip | Route | CPU-s | Speed |
+| --- | --- | ---: | ---: |
+| 1080p HDR10 to 720p, 900 frames | RGA prescale, then libplacebo | 18.84 | 26.5 fps |
+| 1080p HDR10 to 720p, 900 frames | Software decode, then libplacebo | 50.37 | 24.6 fps |
+| 1080p HDR10 to 720p, 900 frames | Hardware decode and RGA scale, no tone map | 1.83 | 335 fps |
+| 4K HDR10 to 1080p, 300 frames | RGA prescale, then libplacebo | 12.50 | 12.1 fps |
+| 4K HDR10 to 1080p, 300 frames | Software decode, then libplacebo | 56.90 | 9.9 fps |
+
+The hardware-decoded tone map is bit-identical to the software-decoded one. A CPU tone map
+through `zscale` costs 4.1x libplacebo's CPU at 1080p. 4K HDR10 stays short of realtime on
+every route.
+
+A graph carries one `-filter_hw_device`, and `scale_rkrga` needs the RKMPP device. With no
+Vulkan device bound, libplacebo creates its own and does its own upload and download.
+Frames do not move between RKMPP and Vulkan in either direction: `hwmap` and `hwupload`
+with `derive_device` fail with `ENOSYS`.
+
+`P010` in this chain corrupts the picture without an error:
+
+- `scale_rkrga=format=p010` followed by `hwdownload,format=p010le` reads a `P010` stride
+  from a buffer laid out at the `NV15` stride. `NV15` output costs the same, 18.68 against
+  18.84 CPU-s.
+- A `p010le` frame uploaded for libplacebo reads as all zeros, and `libplacebo=format=p010le`
+  followed by `hwdownload` gives a flat green field. `yuv420p10le` works on both sides.
+  ffmpeg's own Vulkan `P010` round trip is bit-exact, which places the fault in
+  libplacebo's frame mapping [inferred].
+
+> **Distrust the picture from any graph that carries `P010`, until a frame has been
+> looked at.**
+
+### Subtitle burn-in
+
+RGA is the cheapest and the fastest burn-in route. A 1080p HEVC clip goes to 720p HEVC
+through `hevc_rkmpp`, with typeset ASS burned in at the output size, over 900 frames
+[measured, 2026-08-30, 7.2.2]:
+
+| Route | CPU-s | Speed |
+| --- | ---: | ---: |
+| No subtitles: hardware decode and `scale_rkrga` | 2.04 | 401 fps |
+| RGA: `scale_rkrga` and `overlay_rkrga` | 12.88 | 77.5 fps |
+| Vulkan: `libplacebo` and `overlay_vulkan` | 19.36 | 33.3 fps |
+| Hardware decode, swscale and `subtitles` | 27.29 | 73.0 fps |
+| Everything on the CPU | 49.36 | 75.8 fps |
+
+All four subtitled routes produce the same picture. Most of what the RGA route spends is
+libass. Typeset ASS costs it 9.85 CPU-s per 900 frames at 1080p, and 34.82 at 4K. At 25 fps
+the 1080p figure is about a quarter of one core. `overlay_rkrga` also composites directly
+over a 3840-wide `NV15` frame, with no conversion stage.
 
 ## GPU and Vulkan
 
@@ -552,12 +753,76 @@ The G610 is arch v10 with native timeline semaphores, which is what keeps ffmpeg
 hwcontext working on this SoC. The RK3576's Bifrost G52 has neither a usable PanVk nor
 that path (see [the RK3576 GPU](../rk3576/video-reference.md#gpu)).
 
+### Vulkan filters
+
+With hardware decode on both sides, PanVk scales far below the CPU's cost
+[measured, 2026-08-11, 7.1.7]:
+
+| 1080p scale, 900 frames | CPU-s | Speed | Luma against swscale |
+| --- | ---: | ---: | --- |
+| swscale | 19.98 | 144 fps | |
+| `scale_vulkan` | 1.11 | 409 fps | 53.79 dB |
+| `libplacebo` | 3.52 | 108 fps | 49.4 dB |
+
+An 8-bit `NV12` DRM PRIME frame imports into Vulkan without a copy only as two layers, an
+`R8` luma layer and a `GR88` chroma layer. ffmpeg's import table carries no multi-planar
+YUV fourcc, and a single `NV12` layer fails with `Unsupported DMABUF layer format
+0x3231564e` [source]. `overlay_vulkan` takes its two inputs only in one software format,
+and otherwise fails with `Mismatching sw formats!` [measured].
+
+### OpenCL
+
+Mesa's rusticl drives the G610 only with `RUSTICL_ENABLE=panfrost` set
+[measured, 2026-08-30, Mesa 26.1.6]. It then reports OpenCL 3.0 with OpenCL C 1.2, four
+compute units at 800 MHz, a work-group size of 256, and image support. It has no double
+precision, no `cl_arm_import_memory` and no dma-buf sharing extension. A decoded frame
+therefore reaches OpenCL only through a copy.
+
+`clpeak` measures the device as follows [measured, 2026-08-30, Mesa 26.1.6]:
+
+| Quantity | Result |
+| --- | ---: |
+| Global memory bandwidth | 21.7 GB/s |
+| Single precision, `float4` | 410 GFLOPS |
+| Half precision, `half4` | 768 GFLOPS |
+| 32-bit integer | 106 GIOPS |
+| Host to device, `enqueueWriteBuffer` | 6.56 GB/s |
+| Device to host, `enqueueReadBuffer` | 1.11 GB/s |
+| Kernel launch latency | 162 us |
+
 ## RGA
 
-The RGA has three cores, reached through the vendor's out-of-tree multicore driver at
-`/dev/rga` [measured]: `rga3_core0` and `rga3_core1` (hw 3.0.76831), and `rga2_core0`
-(hw 3.2.63318). The in-tree `rockchip-rga` V4L2 driver binds only `rockchip,rk3288-rga`
-and `rockchip,rk3399-rga` [source], so it does not drive this SoC's RGA.
+The RGA has three cores, and the mainline dtsi describes all three, enabled
+[source, 7.2.9]:
+
+| Core | Node | Compatible | Power domain | IOMMU |
+| --- | --- | --- | --- | --- |
+| RGA3 core 0 | `rga@fdb60000` | `rockchip,rk3588-rga3` | `PD_RGA30` | `iommu@fdb60f00` |
+| RGA3 core 1 | `rga@fdb70000` | `rockchip,rk3588-rga3` | `PD_RGA31` | `iommu@fdb70f00` |
+| RGA2 | `rga@fdb80000` | `rockchip,rk3588-rga`, `rockchip,rk3288-rga` | `PD_VDPU` | None |
+
+Two drivers can take them, and each needs a different device tree.
+
+The in-tree `rockchip-rga` V4L2 driver matches `rockchip,rk3288-rga`,
+`rockchip,rk3399-rga` and `rockchip,rk3588-rga3` [source, 7.2.9]. On the stock tree it
+binds the RGA2 through its fallback compatible, and the first RGA3 core. The second RGA3
+core logs `missing multi-core support, ignoring this instance`. arm64's defconfig builds
+the driver as a module. Each bound core is its own V4L2 M2M node, and the RGA3 backend
+lists 8-bit RGB and YUV formats only, with no `NV15` or `P010`.
+
+The vendor's out-of-tree multicore driver presents one `/dev/rga` that schedules work
+across all three cores, and it is what librga and the `*_rkrga` filters use. It needs two
+device-tree changes per node:
+
+- The compatibles become `rockchip,rga3_core0`, `rockchip,rga3_core1` and
+  `rockchip,rga2_core0`, which tell the two RGA3 cores apart.
+- Each `reg` window grows to 4 KiB, because the driver programs the core's IOMMU through
+  it at offset `0xf00`. The mainline windows are `0x200` and `0x180`.
+
+Under the vendor driver the reference unit reports `rga3_core0` and `rga3_core1` at hw
+3.0.76831, and `rga2_core0` at hw 3.2.63318 [measured]. Load its `rga3` module by name,
+because it carries no alias table [source]. It creates `/dev/rga` as `0600 root:root`, and
+librga segfaults on a refused open [measured].
 
 RGA3 covers BT.2020. The RK3576 has no RGA3, and its RGA2 does not cover BT.2020 (see
 [the RK3576 RGA](../rk3576/video-reference.md#rga)).
@@ -587,6 +852,39 @@ ffmpeg -init_hw_device rkmpp=rk -filter_hw_device rk ...
 
 Without that device, the filters fail with `No RKMPP hardware context provided`. Device
 derivation does not substitute: `hwmap=derive_device=rkmpp` fails with `ENOSYS`.
+
+### The 10-bit stride
+
+The RGA reads an `NV15` or `NV20` source only at a byte stride that is a multiple of 64
+[measured, 2026-08-30, 7.2.2]. The packed formats carry five bytes per four samples. A
+line of width `w` therefore takes `w × 5 / 4` bytes. That product is a multiple of 64 only
+for a width that is a multiple of 256.
+
+Mainline rkvdec and the AV1 decoder size their `NV15` capture through
+`v4l2_fill_pixfmt_mp()`, with no alignment beyond that product [source, 7.2.9]. A
+1920-wide frame gets a 2400-byte stride, and the RGA refuses it:
+
+| Width | `NV15` stride | Stride mod 64 | RGA blit |
+| ---: | ---: | ---: | --- |
+| 1280 | 1600 | 0 | Succeeds |
+| 1600 | 2000 | 16 | Fails, -22 |
+| 1920 | 2400 | 32 | Fails, -22 |
+| 2560 | 3200 | 0 | Succeeds |
+| 3200 | 4000 | 32 | Fails, -5 |
+| 3840 | 4800 | 0 | Succeeds |
+
+The failure is on the blit, not on configuration. Height padding and bit depth are not the
+variable: 8-bit `NV12` at 1920×1080 blits. The RGA3's debugfs advertises
+`byte_stride_align: 16`, which does not hold for `NV15`.
+
+The decoders themselves take every stride register as `bytesperline / 16`, so a padded
+stride costs them nothing [source]. The fix rounds `bytesperline` up to 64 for the packed
+formats, in rkvdec's `rkvdec_fill_decoded_pixfmt()` and the AV1 decoder's
+`hantro_try_fmt()`. With it, 11 of 11 tested widths blit [measured, 2026-08-30 and
+2026-08-31, 7.2.2]. A 1920×1080 to 1280×720 `scale_rkrga` run on the padded stride is byte-exact.
+
+> **On a mainline decoder, 1080p 10-bit has no RGA path.** 4K survives only because
+> 3840 happens to be a multiple of 256.
 
 ## Encode
 
@@ -620,12 +918,28 @@ Three behaviors differ from software `mjpeg`:
   luma is rescaled and PSNR sits near 26 dB whatever the quality. Software JPEG measured
   the same way gives the same 26 dB, so run that control before trusting a luma number.
 
-JPEG decode is a separate block. Sascha Hauer's standalone `rkjpegd` driver (RK3588 and
-RK356x only, stateful M2M, JPEG in and NV12 out) was first posted in August 2026. It is
-at v4 (2026-09-18) and unmerged. When it lands, an ffmpeg decoder wrapper is a small
-mirror of the encoder wrapper [expected]. Both directions depend on one `v4l2_m2m` fix,
-because `v4l2_get_coded_format()` serves both and hits the same MJPEG-versus-JPEG fourcc
-dead end.
+### The JPEG encoder's V4L2 contract
+
+A V4L2 client of this encoder meets seven driver behaviors, each confirmed on the
+reference unit [measured, 2026-08-31]:
+
+- Set the CAPTURE (coded) format before the OUTPUT (raw) one. `hantro_set_fmt_cap()`
+  calls `hantro_reset_raw_fmt()`, so the reverse order leaves the hardware on its default
+  `YM12` with no error, and the chroma comes out wrong.
+- `TRY_FMT` substitutes and still returns 0. A request for `NV12` on the multiplanar queue
+  returns `YM12`, so compare the fourcc that comes back.
+- The coded format enumerates as `V4L2_PIX_FMT_JPEG` only, never `V4L2_PIX_FMT_MJPEG`.
+- `V4L2_CID_JPEG_COMPRESSION_QUALITY` belongs to the JPEG control class. Set under the
+  MPEG class, it fails with `EINVAL`.
+- The OUTPUT crop rectangle sets the JPEG's dimensions. Without it, a 1080-line source
+  writes a 1088-line JPEG.
+- A requested CAPTURE size of 0 lets the driver size the buffer, at the header plus the
+  full raw picture. A 1080p JPEG at quality 95 reaches 480 KB.
+- The driver sets no `V4L2_BUF_FLAG_KEYFRAME`, though every JPEG is an intra picture.
+
+At matched quality the files are 7-30% larger than software `mjpeg`'s, because the
+driver uses fixed Annex K tables and Huffman codes [measured]. Quality 50 gives about
+40.6 dB at 116 KB for a 1080p frame.
 
 ### The JPEG encoder's frame-size cap
 
@@ -661,6 +975,15 @@ direction of the change. A rectangle the driver grew is a warning, and one it sh
 fail the encoder open. Against a wrapper without that check, clamp the input to 8176 in
 each axis.
 
+### JPEG decode
+
+JPEG decode is a separate block. Sascha Hauer's standalone `rkjpegd` driver (RK3588 and
+RK356x only, stateful M2M, JPEG in and NV12 out) was first posted in August 2026. It is
+at v4 (2026-09-18) and unmerged. When it lands, an ffmpeg decoder wrapper is a small
+mirror of the encoder wrapper [expected]. Both directions depend on one `v4l2_m2m` fix,
+because `v4l2_get_coded_format()` serves both and hits the same MJPEG-versus-JPEG fourcc
+dead end.
+
 ### VEPU580 encode
 
 VEPU580 H.264 and HEVC encode runs through the out-of-tree `mpp_service` VEPU580 port. The
@@ -668,6 +991,44 @@ port presents `/dev/mpp_service`, and ffmpeg's `hevc_rkmpp` and `h264_rkmpp` enc
 drive it. The matching `*_rkmpp` decoders build, but never open on a mainline kernel. MPP
 finds no decode client there, because `rkvdec` is a V4L2 stateless driver rather than an
 MPP service.
+
+`-hwaccel rkmpp` therefore decodes in software, with no message. It costs 49.85 CPU-s
+against 50.19 for no hwaccel at all, on the same 900 frames [measured, 2026-08-11, 7.1.7].
+
+The mainline dtsi carries no VEPU580 node [source, 7.2.9]. The port describes two cores
+[source]:
+
+| Core | Registers | Interrupt | IOMMU | Power domain |
+| --- | --- | --- | --- | --- |
+| 0 | `fdbd0000`, `0x6000` bytes | `GIC_SPI 101` | `fdbdf000`, two banks, `GIC_SPI 99` and `100` | `PD_VENC0` |
+| 1 | `fdbe0000`, `0x6000` bytes | `GIC_SPI 104` | `fdbef000`, two banks, `GIC_SPI 102` and `103` | `PD_VENC1` |
+
+Each core runs its AXI clock at 500 MHz and its core clock at 800 MHz.
+
+The encoder's output buffer must be physically contiguous, because the driver programs
+only the buffer's first scatter-gather segment [measured]. On mainline that buffer comes
+from the CMA heap, `/dev/dma_heap/default_cma_region`, since the vendor kernel's heap
+names do not exist there. arm64's defconfig reserves 32 MiB of CMA [source, 7.2.9]. The
+measurements on this page ran with 384 MiB, set by `cma=384M`.
+
+The CMA heap's buffers are cached, so MPP must sync each one through dma-buf around the
+hardware's access. An allocator that marks the heap uncached makes MPP skip that sync.
+The stream then reaches the CPU with the slice start codes at each IDR overwritten
+[measured, 2026-08-11, 7.1.7]:
+
+| Encode of 90 frames | Heap marked uncached | Heap marked cached |
+| --- | --- | --- |
+| `h264_rkmpp` | 24/90 decode back | 90/90 |
+| `hevc_rkmpp` | 11/90 decode back | 90/90 |
+
+> **Decode every encoder test's output.** The broken streams above encode with no error,
+> and only decoding them shows the damage.
+
+VEPU580 encodes 8-bit only. MPP maps every 10-bit input format to `VEPU5xx_FMT_BUTT`, its
+invalid-format sentinel, so a 10-bit source is converted to 8-bit before the encoder
+[source]. MPP releases before commit `264553f9` (2026-04-22) write the VEPU580 bitstream's
+top address as the buffer size rather than size minus one. The hardware then page-faults
+as it wraps its output [source].
 
 ### Upstream encoder work
 
@@ -757,7 +1118,8 @@ the driver does not know, and its support is posted upstream, unmerged.
 - [RK3576 video reference](../rk3576/video-reference.md): the same subsystems on the other
   SoC, where the decoder is VDPU383, there is no RGA3, and encode is undriven.
 - [RK3576 H.264 power-up erratum](../rk3576/h264-power-up-erratum.md): the RK3588 does
-  not show it [measured], so nothing from it applies here.
+  not show it [measured, 2026-08-12]. Of 66 decode sessions, none corrupts while both
+  rkvdec power domains cycle off. Nothing from it applies here.
 
 ## Sources
 
@@ -765,6 +1127,10 @@ Citation key:
 
 - `[LORE]`: the linux-media thread on the RK3576 VEPU510 RFC, with Nicolas Dufresne's
   reply on the encoder direction (2026-07-22).
+- `[MESA]`: Mesa's `src/gallium/frontends/dri/dri_helpers.c` (the `DRM_FORMAT_NV15`
+  mapping and `alt_pipe_format()`) and `src/panfrost/lib/pan_format.c` (the
+  `R10_G10B10_420_UNORM` entry for architecture 7 onward). Both are present on the 25.0
+  and 26.1 branches and on main at `9965f2d5` (2026-09-28), and absent on 24.2.
 
 External sources named in the text:
 
@@ -774,7 +1140,6 @@ External sources named in the text:
 - Sascha Hauer's `rkjpegd` driver, v4 (2026-09-18), and his unmerged `verisilicon`
   run-failure cleanup
 - Mesa merge requests !42353 and !42451
-- The nyanmisaka `ffmpeg-rockchip` wiki
 - Turing's RK1 I/O specification
 - AOM's `av1-test-data` vectors and their reference `.md5` files
 - Fluster's `compare_yuv_files()`

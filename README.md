@@ -47,7 +47,14 @@ The tree is ordered by SoC > Family > Board:
 
 | Document | Subject |
 |---|---|
+| [`rk3588/boot-firmware.md`](rk3588/boot-firmware.md) | The boot chain, BL31's PSCI, SCMI and SiP services, and u-boot's handoff to a bare-metal program |
+| [`rk3588/cpu-reference.md`](rk3588/cpu-reference.md) | The cores, their ID registers and numbering, the caches, coherency and errata |
+| [`rk3588/system-reference.md`](rk3588/system-reference.md) | The address map, the GIC-600, the timers, the UARTs and the TRNG |
+| [`rk3588/system-sleep.md`](rk3588/system-sleep.md) | The PMU's wake sources, the PMU timer, and BL31's `SYSTEM_SUSPEND` |
 | [`rk3588/video-reference.md`](rk3588/video-reference.md) | Decode, encode, RGA, the GPU, the HDMI receiver and what a transcode costs |
+| [`rk3588/npu-reference.md`](rk3588/npu-reference.md) | The NPU: its cores, power, clock and register-level behavior under the mainline `rocket` driver |
+| [`rk3588/corrections-and-gotchas.md`](rk3588/corrections-and-gotchas.md) | Misstated RK3588 claims, and traps that hold for every board on the SoC |
+| [`rk3588/turing-rk1/hardware-reference.md`](rk3588/turing-rk1/hardware-reference.md) | The Turing RK1: power, memory, storage, Ethernet, USB, console, RTC, boot and recovery |
 
 ## Evidence
 

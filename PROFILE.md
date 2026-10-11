@@ -72,6 +72,8 @@ Claims that are true only inside a boundary:
 - A measurement holds for the reference unit, at the kernel it names.
 - An RK3576 measurement comes from one board, the H96 MAX M9. A claim stated for the SoC
   rests on that board unless the text says otherwise.
+- An RK3588 measurement comes from one board, the Turing RK1. A claim stated for the SoC
+  rests on that board unless the text says otherwise.
 - A Veyron measurement comes from one C201. A claim about minnie or mickey is `[source]`
   unless it names other evidence.
 
@@ -89,6 +91,13 @@ to it.
 | RK3576 decode, RGA, GPU and the 10-bit ceiling | `rk3576/video-reference.md` |
 | The RK3576 NPU | `rk3576/npu-reference.md` |
 | The H96 AIC8800D80 Wi-Fi and Bluetooth | `rk3576/h96-max-m9/wifi-bluetooth.md` |
+| The RK3588 boot chain, BL31's PSCI, SCMI and SiP services, and u-boot's handoff | `rk3588/boot-firmware.md` |
+| The RK3588 cores, ID registers, caches, coherency and errata | `rk3588/cpu-reference.md` |
+| The RK3588 address map, GIC, timers, UARTs and TRNG | `rk3588/system-reference.md` |
+| The RK3588 PMU wake sources, PMU timer and system suspend | `rk3588/system-sleep.md` |
+| RK3588 decode, encode, RGA, GPU and the HDMI receiver | `rk3588/video-reference.md` |
+| The RK3588 NPU | `rk3588/npu-reference.md` |
+| The Turing RK1 memory map, console and management-controller paths | `rk3588/turing-rk1/hardware-reference.md` |
 | The Veyron per-board deltas, the in-tree board list, the eMMC device node | `rk3288/veyron/family-boards.md` |
 | The Veyron boot chain, the payload budget, the factory eMMC layout | `rk3288/veyron/boot-chain.md` |
 | The Veyron initramfs driver chains and the panic timeout | `rk3288/veyron/white-screen.md` |

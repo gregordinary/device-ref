@@ -7,7 +7,8 @@ registers give them. It also covers the cache maintenance the cores need, the co
 the SoC's devices, the errata that apply, and the cores' operating points.
 
 The document is SoC-level. Register readings come from the reference unit, a Turing RK1,
-read on each core by a bare-metal program started from mainline u-boot 2026.10. Linux
+read on each core by a bare-metal program started from mainline u-boot 2026.10. Three
+further ID registers come from a NanoPi R6S, and the text says so where it cites them. Linux
 readings come from the same unit under mainline Linux 7.2.9. Configuration facts come
 from Rockchip's technical reference manual [source][TRM].
 
@@ -60,10 +61,13 @@ The four cores of each kind read alike [measured, 2026-10-08, u-boot 2026.10][LO
 | `MIDR_EL1` | `0x412f_d050`: Arm, part `0xd05`, r2p0 | `0x414f_d0b0`: Arm, part `0xd0b`, r4p0 |
 | `ID_AA64PFR0_EL1` | `0x1111_2222` | `0x1100_0000_1111_1112` |
 | `ID_AA64PFR1_EL1` | `0x10` | `0x10` |
+| `ID_AA64DFR0_EL1` | `0x1030_5408` [IDREGS2] | `0x1030_5408` [IDREGS2] |
+| `ID_AA64ISAR0_EL1` | `0x1000_1021_1120` [IDREGS2] | `0x1000_1021_1120` [IDREGS2] |
 | `ID_AA64ISAR1_EL1` | `0x10_0001` | `0x10_0001` |
 | `ID_AA64ISAR2_EL1` | 0 | 0 |
 | `ID_AA64MMFR0_EL1` | `0x10_1122` | `0x10_1122` |
 | `ID_AA64MMFR1_EL1` | `0x1021_2122` | `0x1021_2122` |
+| `ID_AA64MMFR2_EL1` | `0x1011` [IDREGS2] | `0x1011` [IDREGS2] |
 
 The two kinds differ in AArch32. The Cortex-A55 runs it at every exception level, and the
 Cortex-A76 at EL0 alone. Both MIDR revisions agree with the manual's.
@@ -80,9 +84,28 @@ These fields read the same on both kinds:
 | `MMFR0.PARange` | 2 | 40-bit physical addresses |
 | `PFR0.GIC` | 1 | The GICv3 CPU interface's system registers |
 
-`RNDR` gives the boot core, a Cortex-A55, no random number [measured, 2026-10-09, u-boot
-2026.10][HANDOFF]. Linux reports no `rng` capability, so at least one core lacks FEAT_RNG
-[inferred]. The Cortex-A76's `ID_AA64ISAR0_EL1` has not been read. The SoC's TRNG is the hardware source (see
+The rows marked `[IDREGS2]` come from a second probe, on a NanoPi R6S, an RK3588S board. It
+read one core of each kind, and started the Cortex-A76 through PSCI `CPU_ON` [measured,
+2026-10-22, u-boot][IDREGS2]. The three registers read the same on both kinds. The probe
+also read every other register in the table, and each value matched the reference unit's.
+The new registers decode as follows:
+
+- `MMFR2.NV` reads 0: neither kind implements FEAT_NV or FEAT_NV2. A hypervisor runs at
+  EL2 alone, and a guest cannot be given an EL2 of its own with hardware support
+  [inferred]. `MMFR2` also sets `CnP`, `UAO` and `IESB`.
+- `MMFR0.TGran16_2` reads 0, which defers to `MMFR0.TGran16`. The 16 KiB granule therefore
+  holds at stage 2 as well.
+- `ISAR0` gives AES with PMULL, SHA1, SHA2, CRC32, the LSE atomics, RDM and the dot
+  product. It gives no SHA3, SM3, SM4, FHM or `RNDR`. That agrees with Linux's capability
+  list below.
+- `DFR0` gives Armv8.2 debug, PMUv3 at the Armv8.1 level, six breakpoints of which two
+  match a context, and four watchpoints. It gives no Statistical Profiling Extension and no
+  system-register trace interface.
+
+Neither kind implements FEAT_RNG, by `ISAR0.RNDR` [measured, 2026-10-22, u-boot][IDREGS2].
+On the reference unit, `RNDR` gives the boot core no random number [measured, 2026-10-09,
+u-boot 2026.10][HANDOFF], and Linux reports no `rng` capability [measured, 2026-10-08,
+7.2.9][CPUINFO]. The SoC's TRNG is the hardware source (see
 [the TRNG](system-reference.md#trng)).
 
 Under Linux, the reference unit reports these hardware capabilities [measured, 2026-10-08,
@@ -366,3 +389,10 @@ Captures from the reference unit, kept with its evidence outside this repository
 - `[CACHEINFO]`: `/sys/devices/system/cpu/cpu0/cache` and `cpu4/cache`, a Cortex-A55 and a
   Cortex-A76, on the same boot.
 - `[CPUINFO]`: `/proc/cpuinfo` on the same boot.
+
+A capture from another RK3588 board, kept with its evidence outside this repository:
+
+- `[IDREGS2]`: a bare-metal feature probe on a NanoPi R6S, run from u-boot with `go`,
+  2026-10-22. It reads the AArch64 identification block on the boot core, a Cortex-A55,
+  and on a Cortex-A76 at affinity `0x400` that it starts through PSCI `CPU_ON`. It prints
+  all 16 digits of each value, and the capture lost no bytes.

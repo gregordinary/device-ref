@@ -262,8 +262,8 @@ group 1 in the distributor before it waits for its first interrupt [inferred].
 u-boot's page tables map every DRAM range as Normal write-back memory, inner shareable
 [source][UBOOT]. They map the peripheral window from `0xf000_0000` as Device-nGnRnE, and
 the SCMI channel's 4 KiB at `0x10_f000` as Normal non-cacheable [source][UBOOT]. On a
-32 GB module, `AT S1E2R` probed four windows, three below 4 GiB and one above 16 GiB.
-Every page in them maps to itself as Normal write-back [measured, 2026-10-09, u-boot
+32 GB module, `AT S1E2R` probed 7,126 pages in four windows, three below 4 GiB and one
+above 16 GiB. Every page maps to itself as Normal write-back [measured, 2026-10-09, u-boot
 2026.10][FIRSTPROC]. Its DRAM entries stop at 32 GiB, and leave two ranges unmapped, 5 MiB at
 `0x3_fc00_0000` and 1 MiB at `0x3_fff0_0000` [source][UBOOT].
 

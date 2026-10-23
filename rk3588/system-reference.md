@@ -233,7 +233,7 @@ nothing at the prompt has turned it on [inferred]. A bare-metal program started 
 takes eight numbers of 32 bytes from it. None is all one byte value, and none repeats the
 one before [measured, 2026-10-09, u-boot 2026.10][FIRSTPROC].
 
-`RNDR` gives the boot core no random number (see [ID registers](cpu-reference.md#id-registers)),
+Neither core kind implements `RNDR` (see [ID registers](cpu-reference.md#id-registers)),
 so the TRNG is the hardware entropy a bootloader can hand on.
 
 ## IOMMUs

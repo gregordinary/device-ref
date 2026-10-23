@@ -96,6 +96,14 @@ about 94 frames per second, however many streams share it [measured, 2026-10-07,
 Both decoders cost 0.4-0.8 CPU-s per 30 s stream. Which node a stream lands on therefore
 sets the 1080p H.264 ceiling, as [attributing a failure](#attributing-a-failure) describes.
 
+The decoder's timeout register, `0x080` (register 32), counts AXI clock cycles. Mainline
+sets it by picture size: `0xefffff` up to 1080p, `0x2cfffff` up to 4K, `0x4ffffff` up to
+8K, and `0xffffffff` above [source]. It arms its own watchdog at twice that threshold over
+the AXI clock's rate. On a Rock 5B, the intervals between timeout resets fit a count of AXI
+cycles [reported][YSP]. A decoder that resets itself also clears its MMU, which the driver
+then reprograms (see [MMU state across power and
+reset](system-reference.md#mmu-state-across-power-and-reset)).
+
 The series splits the driver around `struct rkvdec_core`. A change touching that
 structure applies only to a kernel carrying the series. An rkvdec fix therefore does not
 move unchanged between a kernel with the series and one without it. The case arises
@@ -107,6 +115,13 @@ Two media blocks in the silicon present no node under mainline: a dedicated JPEG
 decoder, and the IEP, the vendor kernels' deinterlacer. The mainline dtsi
 carries clock, power-domain and QoS plumbing for both (`HCLK_JPEG_DECODER`,
 `qos_jpeg_dec`, `qos_iep`), but no device node or driver [source].
+
+The vendor kernel describes the IEP as `iep@fdbb0000`, `rockchip,iep-v2`, with `0x500`
+bytes of registers and its own MMU at `fdbb0800`. The block and its MMU share
+`GIC_SPI 117`. It takes an AXI, an AHB and a core clock, with the AXI clock at 594 MHz,
+three resets, and sits in `PD_VDPU` [source][VENDOR]. The RK3588 has no VDPP [inferred].
+No vendor RK3588 tree describes one, and the vendor VDPP driver matches only the RK3528
+and RK3576 [source][VENDOR].
 
 Sascha Hauer's mainline `rkjpegd` driver is in review upstream, at v4 (2026-09-18) and
 unmerged. It describes the JPEG decoder as `video-codec@fdb90000` in `PD_VDPU`, with its
@@ -128,8 +143,8 @@ A standalone C API (`iep2_api.h`) lets an ffmpeg filter drive IEP2 without going
 `mpp_dec_vproc.c`. The missing pieces are that kernel client and the filter. Two facts
 bound the payoff:
 
-- IEP2 takes NV12 8-bit in, writes NV12 8-bit out and is capped at 1080, so it cannot
-  process 10-bit content.
+- IEP2 is an 8-bit block capped at 1080, so it cannot process 10-bit content. It reads and
+  writes 4:2:0 and 4:2:2, semi-planar or planar [source][VENDOR].
 - With no IEP driver, `bwdif` deinterlaces on the CPU at 0.93 CPU-s per second of 1080i
   content [measured], about 1.35x what hardware decode saves. A whole 1080i to 1080p60
   transcode costs about 1.1 cores per realtime stream, against 0.15 without
@@ -212,8 +227,9 @@ That mapping makes 8K 10-bit HEVC decode fail deterministically with `dma alloc 
 hours and workloads. The failure reads as a 10-bit or an allocation-size ceiling, and it
 is neither. Each link of the chain is measured:
 
-1. `rk3588-base.dtsi` gives `system_sram2` two pools, and `vdec1_sram` sits at physical
-   address `0xff079000`, the stale physical address in the message.
+1. `rk3588-base.dtsi` gives `system_sram2` two pools: `vdec0_sram`, 480 KiB at
+   `0xff001000`, and `vdec1_sram`, 476 KiB at `0xff079000`. The second address is the
+   stale physical address in the message.
 2. `rkvdec_allocate_rcb()` maps the RCB out of that gen_pool into the shared domain,
    using the CPU virtual address as the IOVA.
 3. That domain is the device's DMA default domain, whose IOVA allocator serves every
@@ -250,6 +266,16 @@ Without the change, three concurrent 4K HEVC 10-bit decodes already fail. The ke
 `dma alloc of size 19701760 failed`, and aggregate throughput falls below one stream's
 [measured, 2026-08-13, 7.1.7]. The signature fits this collision [inferred]. Three or more
 4K 10-bit streams are not measured with the change.
+
+The driver allocates the RCB buffer by buffer. Each buffer comes from SRAM if it fits, and
+from DRAM otherwise [source]. VDPU381's size table, each buffer rounded to 4 KiB, totals
+about 196 KiB at 1080p, 372 KiB at 4K and 736 KiB at 8K [inferred]. A 4K stream's RCB
+therefore fits in one core's pool, and an 8K stream's spills part of it to DRAM.
+
+The vendor kernel avoids the collision by construction. Each decoder core's node carries
+`rockchip,rcb-iova`, a fixed 1 MiB window at `0xfff00000` for core 0 and `0xffe00000` for
+core 1. The driver reserves that window in the IOVA allocator and maps the RCB into it
+[source][VENDOR].
 
 When changing this code, confirm that the SRAM path still serves the RCB. A fallback to
 `dma_alloc_coherent` also makes the collision vanish, for the wrong reason and at a
@@ -375,6 +401,11 @@ identically twice [measured].
 where AV1 needs the vendor MPP stack. The out-of-tree VDPU383 AV1 driver and its
 known-wrong output have no bearing on this block (see [the RK3576
 decoder](../rk3576/video-reference.md#the-decoder)).
+
+The mainline dtsi describes the decoder as `video-codec@fdc70000`, one `0x800` window on
+`GIC_SPI 108` [source]. The vendor kernel describes two more banks of `0x400` each: a
+cache at `fdc80000` on `GIC_SPI 107`, and an AFBC unit at `fdc90000` on `GIC_SPI 106`
+[source][VENDOR]. Mainline drives neither.
 
 The decoder accepts frames from 64×64 up to its driver cap. With the cap raised to
 8192×4352, decode is bit-exact at 7680×4320 and at 8192×4352 [measured, 7.2.2]. Output
@@ -799,9 +830,21 @@ The RGA has three cores, and the mainline dtsi describes all three, enabled
 | --- | --- | --- | --- | --- |
 | RGA3 core 0 | `rga@fdb60000` | `rockchip,rk3588-rga3` | `PD_RGA30` | `iommu@fdb60f00` |
 | RGA3 core 1 | `rga@fdb70000` | `rockchip,rk3588-rga3` | `PD_RGA31` | `iommu@fdb70f00` |
-| RGA2 | `rga@fdb80000` | `rockchip,rk3588-rga`, `rockchip,rk3288-rga` | `PD_VDPU` | None |
+| RGA2 | `rga@fdb80000` | `rockchip,rk3588-rga`, `rockchip,rk3288-rga` | `PD_VDPU` | None. RGA2 walks its own page table |
 
 Two drivers can take them, and each needs a different device tree.
+
+RGA2 reaches only the low 4 GiB of DRAM. Its page table's entries are 32-bit physical
+addresses, and the in-tree driver writes only the low 32 bits of each page's address
+[source]. That driver sets a 32-bit DMA mask, and allocates its own buffers in
+`ZONE_DMA32`. An imported buffer above 4 GiB is then bounced through SWIOTLB, whose slots
+are 2 KiB, at most 128 of them contiguous [source]. A scatter-gather segment larger than
+256 KiB cannot be bounced [inferred].
+
+The vendor driver keeps a job off RGA2 when any of its buffers lies above 4 GiB
+[source][VENDOR]. Through that driver, a blit from a buffer above 4 GiB that reached RGA2
+ended in a bus error, `INTR[0x701]` [reported][YSP]. On a board with more than 4 GiB, a job
+only RGA2 can run needs its buffers below 4 GiB.
 
 The in-tree `rockchip-rga` V4L2 driver matches `rockchip,rk3288-rga`,
 `rockchip,rk3399-rga` and `rockchip,rk3588-rga3` [source, 7.2.9]. On the stock tree it
@@ -855,10 +898,22 @@ derivation does not substitute: `hwmap=derive_device=rkmpp` fails with `ENOSYS`.
 
 ### The 10-bit stride
 
-The RGA reads an `NV15` or `NV20` source only at a byte stride that is a multiple of 64
-[measured, 2026-08-30, 7.2.2]. The packed formats carry five bytes per four samples. A
-line of width `w` therefore takes `w × 5 / 4` bytes. That product is a multiple of 64 only
-for a width that is a multiple of 256.
+The RGA takes an `NV15` or `NV20` source only at a byte stride that is a multiple of 64
+[measured, 2026-08-30, 7.2.2]. That holds through the vendor driver and the `*_rkrga`
+filters. The
+packed formats carry five bytes per four samples. A line of width `w` therefore takes
+`w × 5 / 4` bytes. That product is a multiple of 64 only for a width that is a multiple of
+256.
+
+The rule is the software's, not the silicon's. For a 10-bit format, the vendor driver's
+alignment check counts 10 bits per unit of the stride it is given. It requires a multiple of
+128 bits [source][VENDOR]. Given a stride in bytes, the check demands a byte stride that
+is a multiple of 64. A stride in bytes fits every row of the table below [inferred].
+
+ffmpeg's `rkrga_common.c` requires the
+same multiple before it routes a 10-bit job to RGA3 [source]. With the check counting 8
+bits per byte, RGA3 converts `NV15` at a 1920-wide frame's tight 2400-byte stride
+bit-exactly [reported][YSP].
 
 Mainline rkvdec and the AV1 decoder size their `NV15` capture through
 `v4l2_fill_pixfmt_mp()`, with no alignment beyond that product [source, 7.2.9]. A
@@ -875,7 +930,7 @@ Mainline rkvdec and the AV1 decoder size their `NV15` capture through
 
 The failure is on the blit, not on configuration. Height padding and bit depth are not the
 variable: 8-bit `NV12` at 1920×1080 blits. The RGA3's debugfs advertises
-`byte_stride_align: 16`, which does not hold for `NV15`.
+`byte_stride_align: 16`, the 128 bits the check requires.
 
 The decoders themselves take every stride register as `bytesperline / 16`, so a padded
 stride costs them nothing [source]. The fix rounds `bytesperline` up to 64 for the packed
@@ -883,8 +938,8 @@ formats, in rkvdec's `rkvdec_fill_decoded_pixfmt()` and the AV1 decoder's
 `hantro_try_fmt()`. With it, 11 of 11 tested widths blit [measured, 2026-08-30 and
 2026-08-31, 7.2.2]. A 1920×1080 to 1280×720 `scale_rkrga` run on the padded stride is byte-exact.
 
-> **On a mainline decoder, 1080p 10-bit has no RGA path.** 4K survives only because
-> 3840 happens to be a multiple of 256.
+> **On a mainline decoder, 1080p 10-bit fails the vendor driver's check.** It has no RGA
+> path. 4K survives only because 3840 happens to be a multiple of 256.
 
 ## Encode
 
@@ -1003,7 +1058,10 @@ The mainline dtsi carries no VEPU580 node [source, 7.2.9]. The port describes tw
 | 0 | `fdbd0000`, `0x6000` bytes | `GIC_SPI 101` | `fdbdf000`, two banks, `GIC_SPI 99` and `100` | `PD_VENC0` |
 | 1 | `fdbe0000`, `0x6000` bytes | `GIC_SPI 104` | `fdbef000`, two banks, `GIC_SPI 102` and `103` | `PD_VENC1` |
 
-Each core runs its AXI clock at 500 MHz and its core clock at 800 MHz.
+The port's tree requests 500 MHz for each core's AXI clock and 800 MHz for its core clock.
+The core clock's parents are GPLL, CPLL, AUPLL and NPLL [source]. On a Rock 5B it reads
+786,431,998 Hz, the audio PLL's rate, rather than 800 MHz [reported][YSP]. The core clock
+then follows any change to the audio PLL [inferred].
 
 The encoder's output buffer must be physically contiguous, because the driver programs
 only the buffer's first scatter-gather segment [measured]. On mainline that buffer comes
@@ -1131,6 +1189,16 @@ Citation key:
   mapping and `alt_pipe_format()`) and `src/panfrost/lib/pan_format.c` (the
   `R10_G10B10_420_UNORM` entry for architecture 7 onward). Both are present on the 25.0
   and 26.1 branches and on main at `9965f2d5` (2026-09-28), and absent on 24.2.
+- `[VENDOR]`: the vendor kernel, rockchip-linux/kernel at commit `b4ef083dc`, branch
+  `develop-6.1`, Linux 6.1.141. `arch/arm64/boot/dts/rockchip/rk3588s.dtsi` (the `iep`,
+  `iep_mmu`, `rkvdec0`, `rkvdec1` and `av1d` nodes), `drivers/video/rockchip/mpp/`
+  (`mpp_iep2.c`, `rockchip_iep2_regs.h`, `mpp_vdpp.c` and `mpp_rkvdec2.c`), and the vendor
+  RGA driver's `rga_policy.c` (`rga_check_align`) and `rga_job.c`.
+- `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
+  `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Three of its
+  findings: 2026-07-24 on 10-bit RGA strides and the RGA2 bus error, 2026-07-28 on decoder
+  timeouts, and 2026-08-16 on the encoder's clock. Each was measured under a vendor-derived
+  6.18 kernel. The facts are restated here, not quoted.
 
 External sources named in the text:
 

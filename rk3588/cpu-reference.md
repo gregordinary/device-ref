@@ -4,7 +4,7 @@ This document covers the RK3588's application cores. Its reader writes a bootloa
 kernel port or a device tree for any board on the SoC. It states the cores,
 their revisions, ID registers and numbering, and their caches as the manual and the
 registers give them. It also covers the cache maintenance the cores need, the coherency of
-the SoC's devices, and the errata that apply.
+the SoC's devices, the errata that apply, and the cores' operating points.
 
 The document is SoC-level. Register readings come from the reference unit, a Turing RK1,
 read on each core by a bare-metal program started from mainline u-boot 2026.10. Linux
@@ -234,6 +234,77 @@ Linux reports more on the reference unit [measured, 2026-10-08, 7.2.9][DMESG]:
   takes the Cortex-A55 as unaffected by Spectre-BHB. It clears the Cortex-A76's branch
   history with a loop of 24 branches on each entry from EL0 [source][LINUXERRATA].
 
+## Operating points
+
+Mainline describes one voltage for each CPU frequency, in `rk3588-opp.dtsi`, which both
+`rk3588.dtsi` and `rk3588s.dtsi` include [source][OPP]. The two Cortex-A76 clusters take
+identical tables:
+
+| Frequency | Cortex-A55 | Cortex-A76 |
+|---|---|---|
+| 1008 MHz | 675 mV | |
+| 1200 MHz | 712.5 mV | 675 mV |
+| 1416 MHz | 762.5 mV | 725 mV |
+| 1608 MHz | 850 mV | 762.5 mV |
+| 1800 MHz | 950 mV | 850 mV |
+| 2016 MHz | | 925 mV |
+| 2208 MHz | | 987.5 mV |
+| 2400 MHz | | 1,000 mV |
+
+Each entry's maximum is 950 mV on the Cortex-A55s and 1,000 mV on the Cortex-A76s. The
+Cortex-A55 table marks 1416 MHz as the suspend frequency [source][OPP].
+
+Mainline reads no fuse to choose or adjust these voltages. The OTP at `efuse@fecc0000`
+carries a CPU code, a CPU version and a leakage cell for each cluster [source][DTS]. No
+RK3588 device tree consumes them [source][OPP].
+
+The vendor kernel chooses per part and per die, in two steps [source][VENDOR]:
+
+1. The OTP's specification serial number names the grade. `0xd` is the RK3588M and `0xa`
+   the RK3588J, and a customer-demand cell adds a further bin. The grade selects which
+   operating points exist, through `opp-supported-hw`.
+2. Each cluster's PVTM, an on-die process monitor, gives a reading that a per-cluster table
+   maps to a level. The level selects a voltage column, `opp-microvolt-L<n>`. The
+   Cortex-A55 table runs to level 6, and the Cortex-A76 tables to level 7.
+
+At every frequency the two trees share, mainline's voltage equals the vendor's default
+`opp-microvolt` column [source][VENDOR][OPP]. The vendor tables also carry frequencies
+mainline leaves out. Every cluster gets 408 to 816 MHz, and the Cortex-A76s get 1008 MHz.
+
+Above 2208 MHz the vendor kernel gives each die one top Cortex-A76 frequency, by its PVTM
+level, all at 1,000 mV [source][VENDOR]:
+
+| Level | Top frequency |
+|---|---|
+| 7 | 2400 MHz |
+| 3 or 6 | 2352 MHz |
+| 2 or 5 | 2304 MHz |
+| 0, 1 or 4 | 2256 MHz |
+
+The level reaches the table as the second word of `opp-supported-hw`, one bit per level.
+Mainline offers 2400 MHz to every die [source][OPP]. A die below level 7 therefore runs
+faster under mainline than the vendor kernel allows it [inferred].
+
+One Rock 5B die reads bin 0. Its PVTM gives level 5 on the Cortex-A55s, from a reading of
+1525, and level 7 on both Cortex-A76 clusters, from 1782 and 1778 [reported][YSP]. Under
+the vendor kernel its Cortex-A55 rail held 887.5 mV at 1800 MHz [reported][YSP]. That is
+level 5's voltage, where mainline sets 950 mV [source][VENDOR]. Level 7 sets the
+Cortex-A76s 50 to 87.5 mV below mainline from 1416 to 2208 MHz, and equal at 1200 and
+2400 MHz [source][VENDOR]. Mainline therefore runs such a die at a higher voltage across
+the middle of its range [inferred].
+
+The industrial grade has a table of its own. `rk3588j.dtsi` replaces the CPU and GPU
+tables with a derated set [source][OPP]:
+
+- Cortex-A55: 1200 and 1296 MHz, at 750 and 775 mV.
+- Cortex-A76: 1200, 1416 and 1608 MHz, at 750 to 787.5 mV.
+- GPU: 300 to 700 MHz, at 750 mV.
+
+A board file opts in by including `rk3588j.dtsi` in place of `rk3588.dtsi`, and one
+in-tree board does. Nothing checks the fuse, so an RK3588J on a board that includes
+`rk3588.dtsi` runs the commercial table (see [the grade is the board file's
+choice](corrections-and-gotchas.md#the-grade-is-the-board-files-choice)).
+
 ## Sources
 
 Citation keys:
@@ -253,6 +324,20 @@ Citation keys:
   `arch/arm64/include/asm/tlbflush.h`: `__tlbi_sync_s1ish`. For the other errata,
   `arch/arm64/kernel/proton-pack.c` and the uses of `ARM64_WORKAROUND_SPECULATIVE_AT`, all
   under `arch/arm64/kvm/`.
+- `[OPP]`: the RK3588 device trees in Linux `arch/arm64/boot/dts/rockchip/` at tag `v7.2.9`:
+  `rk3588-opp.dtsi`, `rk3588j.dtsi`, and the includes of `rk3588.dtsi` and `rk3588s.dtsi`.
+  `rk3588-edgeble-neu6b-io.dts` is the one board file that includes `rk3588j.dtsi`. No
+  `rk3588*` file carries an `nvmem-cells` property.
+- `[VENDOR]`: the vendor kernel, rockchip-linux/kernel at commit `b4ef083dc`, branch
+  `develop-6.1`, Linux 6.1.141. `drivers/cpufreq/rockchip-cpufreq.c`
+  (`rk3588_get_soc_info`), `drivers/soc/rockchip/rockchip_opp_select.c`
+  (`rockchip_set_opp_supported_hw`), and the `cluster0_opp_table` to `cluster2_opp_table`
+  nodes of `arch/arm64/boot/dts/rockchip/rk3588s.dtsi`, with their
+  `rockchip,pvtm-voltage-sel` tables.
+- `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
+  `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Its finding of
+  2026-07-27 on the voltage levels, read from the vendor kernel 6.1.115's log and live
+  regulators. The facts are restated here, not quoted.
 - `[SDEN55]`: Arm, *Cortex-A55 Software Developer Errata Notice*, SDEN-859338, issue 16.0,
   2026-01-30, erratum 2441007.
 - `[SDEN76]`: Arm, *Cortex-A76 Software Developer Errata Notice*, SDEN-885749, issue 34,

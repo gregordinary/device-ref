@@ -2,7 +2,8 @@
 
 This document covers the system blocks a bootloader or a new kernel reaches before any
 other driver. They are the address map, the interrupt controller, the timers, the UARTs
-and the true random number generator. It states each block's addresses, configuration and
+and the true random number generator. It also covers the IOMMUs, which every media and
+accelerator driver programs. It states each block's addresses, configuration and
 registers, and the state the boot firmware leaves it in.
 
 The document is SoC-level. Configuration facts come from Rockchip's technical reference
@@ -235,6 +236,156 @@ one before [measured, 2026-10-09, u-boot 2026.10][FIRSTPROC].
 `RNDR` gives the boot core no random number (see [ID registers](cpu-reference.md#id-registers)),
 so the TRNG is the hardware entropy a bootloader can hand on.
 
+## IOMMUs
+
+The SoC has no one IOMMU for its on-chip masters. Each media and accelerator block that
+translates addresses carries an MMU of its own, in front of its AXI master [source][DTS].
+A fault therefore names the block that took it, and a block's MMU is set up, powered and
+reset with that block. PCIe is the exception: its controllers share an Arm MMU-600, an
+SMMUv3.
+
+| MMU | Master | Banks | Interrupt | Power domain | In the dtsi |
+|---|---|---|---|---|---|
+| `iommu@fc900000` | The PCIe controllers | One window of `0x20_0000` | `GIC_SPI` 367, 369, 371 and 374, edge | | Enabled |
+| `iommu@fcb00000` | None in the dtsi | One window of `0x20_0000` | `GIC_SPI` 379, 381, 383 and 386, edge | | Disabled |
+| `iommu@fdab9000` | NPU core 0 | Two of `0x100` | `GIC_SPI 110`, the core's own | `PD_NPUTOP` | Disabled |
+| `iommu@fdaca000`, `iommu@fdada000` | NPU cores 1 and 2 | One of `0x100` | `GIC_SPI` 111 and 112, the cores' own | `PD_NPU1`, `PD_NPU2` | Disabled |
+| `iommu@fdb50800` | VDPU2 decoder | One of `0x40` | `GIC_SPI 118` | `PD_VDPU` | Enabled |
+| `iommu@fdb60f00`, `iommu@fdb70f00` | RGA3 cores 0 and 1 | One of `0x100` | `GIC_SPI` 114 and 115, the cores' own | `PD_RGA30`, `PD_RGA31` | Enabled |
+| `iommu@fdba0800` to `iommu@fdbac800` | The four VEPU121 JPEG encoders | One of `0x40` | `GIC_SPI` 121, 123, 125 and 127 | `PD_VDPU` | Enabled |
+| `iommu@fdc38700`, `iommu@fdc40700` | rkvdec cores 0 and 1 | Two of `0x40` | `GIC_SPI` 96 and 98 | `PD_RKVDEC0`, `PD_RKVDEC1` | Enabled |
+| `iommu@fdca0000` | AV1 decoder | One of `0x600` | `GIC_SPI 109` | `PD_AV1` | Enabled |
+| `iommu@fdce0800` | VICAP | Two of `0x40` | `GIC_SPI 113` | `PD_VI` | Disabled |
+| `iommu@fdd97e00` | VOP | Two of `0x100` | `GIC_SPI 156`, the VOP's own | `PD_VOP` | Disabled |
+
+Each PCIe controller maps its requester IDs to `iommu@fc900000` through `iommu-map`. Two
+controllers sit in `rk3588-base.dtsi`, and the full RK3588 adds three in
+`rk3588-extra.dtsi` [source][DTS]. The MMUs of blocks that mainline does not describe, the
+VEPU580 encoders and the IEP among them, are in the
+[RK3588 video reference](video-reference.md#blocks-without-a-node).
+
+### The Rockchip MMU
+
+Every MMU in the table but the two MMU-600s and the AV1 decoder's is Rockchip's own:
+`"rockchip,rk3588-iommu", "rockchip,rk3568-iommu"`, driven by `rockchip-iommu`
+[source][LINUX]. A node with two banks carries two MMUs, which the driver programs
+identically [source][LINUX]. Each takes its master's AXI and AHB clocks.
+
+Each bank carries these 32-bit registers [source][LINUX]:
+
+| Offset | Register | Use |
+|---|---|---|
+| `0x00` | `DTE_ADDR` | The directory's address |
+| `0x04` | `STATUS` | Bit 0 paging on, bit 1 page fault active, bit 2 stall active, bit 3 idle, bit 4 replay buffer empty, bit 5 the fault was a write |
+| `0x08` | `COMMAND` | 0 enable paging, 1 disable paging, 2 enable stall, 3 disable stall, 4 invalidate the TLB, 5 page fault done, 6 force reset |
+| `0x0c` | `PAGE_FAULT_ADDR` | The IOVA of the last fault |
+| `0x10` | `ZAP_ONE_LINE` | Invalidates the TLB entry of the IOVA written |
+| `0x14` | `INT_RAWSTAT` | Interrupt status before the mask |
+| `0x18` | `INT_CLEAR` | Acknowledges the bits written |
+| `0x1c` | `INT_MASK` | Bit 0 page fault, bit 1 bus error |
+| `0x20` | `INT_STATUS` | Interrupt status after the mask |
+| `0x24` | `AUTO_GATING` | Clock gating control |
+
+The MMU walks two levels of 4 KiB tables, each of 1,024 32-bit entries. IOVA bits 31:22
+index the directory, bits 21:12 the page table, and bits 11:0 are the offset in the page
+[source][LINUX]. The IOVA space is therefore 4 GiB, and Linux fixes each domain's aperture
+at 0 to 4 GiB.
+
+The second-generation entry format packs a 40-bit physical address into 32 bits
+[source][LINUX]:
+
+| Bits | Directory entry | Page entry |
+|---|---|---|
+| 31:12 | Page table address, bits 31:12 | Page address, bits 31:12 |
+| 11:8 | Address bits 35:32 | Address bits 35:32 |
+| 7:4 | Address bits 39:36 | Address bits 39:36 |
+| 3 | Reserved | Security |
+| 2 | Reserved | Writable |
+| 1 | Reserved | Readable |
+| 0 | Valid | Valid |
+
+`DTE_ADDR` takes the directory's address in the same packed form. The directory and the
+page tables can therefore sit anywhere in a 40-bit space, and Linux allocates them with no
+zone limit [source][LINUX]. A master behind this MMU addresses 4 GiB of IOVA and reaches
+all of DRAM through it.
+
+### Enabling the MMU
+
+Linux enables an MMU as a domain is attached, in this order [source][LINUX]:
+
+1. It turns the clocks on, and stalls the MMU if paging is on. A stall needs paging, so an
+   MMU with paging off is not stalled.
+2. It checks that `DTE_ADDR` responds, by writing a dummy address and reading it back. It
+   then issues the force reset, and polls until `DTE_ADDR` reads 0.
+3. For each bank, it writes `DTE_ADDR`, invalidates the TLB, unmasks both interrupts and
+   sets `AUTO_GATING` bit 31.
+4. It enables paging, polls `STATUS` bit 0, and releases the stall.
+
+A node carrying `rockchip,disable-mmu-reset` skips the force reset, because some instances
+misbehave under it [source][BINDING]. The dtsi sets it on the VICAP's MMU [source][DTS].
+Linux names `AUTO_GATING` bit 31 `DISABLE_FETCH_DTE_TIME_LIMIT`, and sets it as a
+workaround for a blocked MMU [source][LINUX].
+
+Disabling runs the reverse: stall, disable paging, write `INT_MASK` and `DTE_ADDR` as 0,
+and release the stall.
+
+On a page fault, Linux reads the IOVA from `PAGE_FAULT_ADDR` and the direction from
+`STATUS` bit 5, and reports the fault. It then invalidates the TLB, issues page fault done
+and writes the status back to `INT_CLEAR` [source][LINUX]. A bus error is logged and
+cleared, with no command. The driver requests its interrupt shared. The NPU cores, the
+RGA3 cores and the VOP share their line with their MMU [source][DTS].
+
+### MMU state across power and reset
+
+An MMU loses its state with its master. Linux ties the master's runtime power management
+to the MMU's through a device link [source][LINUX]. At runtime suspend it disables the MMU,
+and at resume it runs the whole enable sequence again. While an MMU is suspended, an unmap
+skips its TLB invalidation, and the resume's invalidation covers it.
+
+A decoder's own reset clears its MMU as well [inferred]. Mainline rkvdec therefore
+reprograms the decoder's MMU after a failed job [source][LINUX]. It attaches an empty
+domain and detaches it, which restores the default domain and its mappings. On the VDPU381
+decoder it runs when the interrupt status at `0x380` carries bit 4 (error), bit 5
+(timeout) or bit 9 (soft reset done). The NPU's reset clears its MMU in the same
+way (see [detaching a wedged core's MMU](npu-reference.md#detaching-a-wedged-cores-mmu)).
+
+On a Rock 5B decoding corrupt streams, the decoder's status read `0x23`, bits 0, 1 and 5,
+and `0xb`, bits 0, 1 and 3. Bit 9 never appeared [reported][YSP]. Bit 3 is the AXI bus
+error. Rockchip's register description, as [YSP] quotes it, makes bit 3 reset the decoder
+as bit 5 does [reported]. Mainline's restore leaves bit 3 out. A job that fails on bit 3
+alone is then expected to leave the MMU unprogrammed [inferred].
+
+### The AV1 decoder's MMU
+
+The AV1 decoder's MMU is a Verisilicon IOMMU,
+`"rockchip,rk3588-av1-iommu", "verisilicon,iommu-1.2"`, driven by `vsi-iommu` rather than
+`rockchip-iommu` [source][LINUX]. Its format differs:
+
+- A 64-bit table-array entry carries the directory's address, bits 31:10, and a page mode, 0
+  for 4 KiB. The register at `0x38c` takes that entry's address.
+- Directory entries are 32 bits: a page table address aligned to 64 bytes, and a valid bit.
+- Page entries are 32 bits. Bits 31:12 carry page address bits 31:12, and bits 11:4 carry
+  address bits 39:32. Bit 2 is writable and bit 0 valid. There is no readable bit.
+
+Linux allocates every table of this MMU below 4 GiB, and fixes its aperture at 0 to 4 GiB
+[source][LINUX]. It drives these registers:
+
+| Offset | Use |
+|---|---|
+| `0x184` | Bit 4 invalidates the whole TLB. The driver invalidates nothing finer |
+| `0x1ac` | Bit 28 set at enable: out-of-bound reporting |
+| `0x380` | Bit 0 set at enable. Reads back the IOVA of a fault |
+| `0x384` | Interrupt status, three bits. Written 0 to acknowledge |
+| `0x388` | Bit 0 enables the MMU |
+
+The kernel symbol `CONFIG_VSI_IOMMU` has no default, and the AV1 decoder fails to probe
+without it (see [kernel configuration](video-reference.md#kernel-configuration)).
+
+### Masters with no IOMMU
+
+RGA2 has no IOMMU. It walks a page table of its own whose entries are 32-bit physical
+addresses, so it reaches the low 4 GiB only (see [RGA](video-reference.md#rga)).
+
 ## Sources
 
 Citation keys:
@@ -244,11 +395,24 @@ Citation keys:
   timer clocks in section 10.3.1. Chapter 11 gives the GIC-600 configuration in Table
   11-1, and chapter 19 the UART registers in section 19.4. Part 2, section 1.3.5 and Table
   1-5, gives the DRAM channels' address space.
-- `[DTS]`: Linux `arch/arm64/boot/dts/rockchip/rk3588-base.dtsi` at tag `v7.2.9`.
+- `[DTS]`: Linux `arch/arm64/boot/dts/rockchip/rk3588-base.dtsi` at tag `v7.2.9`, and
+  `rk3588-extra.dtsi` for the full RK3588's three further PCIe controllers.
 - `[LINUX]`: Linux at tag `v7.2.9`. `drivers/irqchip/irq-gic-v3.c` (`gic_has_group0`),
   `drivers/clocksource/arm_arch_timer.c` (`arch_timer_of_configure_rate`),
   `drivers/char/hw_random/rockchip-rng.c` (`rk3588_rng_init`, `rk3588_rng_read`), and the
-  `ROCKCHIP_ERRATUM_3588001` entry in `arch/arm64/Kconfig`.
+  `ROCKCHIP_ERRATUM_3588001` entry in `arch/arm64/Kconfig`. For the IOMMUs,
+  `drivers/iommu/rockchip-iommu.c` (the register and entry definitions,
+  `rk_iommu_enable`, `rk_iommu_disable`, `rk_iommu_force_reset`, `rk_iommu_irq`,
+  `rk_iommu_zap_iova`, `rk_iommu_probe_device`, `rk_iommu_domain_alloc_paging` and
+  `iommu_data_ops_v2`), `drivers/iommu/vsi-iommu.c`, and
+  `drivers/media/platform/rockchip/rkvdec/rkvdec.c` (`rkvdec_iommu_restore`,
+  `vdpu381_irq_handler`) with `rkvdec-vdpu381-regs.h`.
+- `[BINDING]`: Linux `Documentation/devicetree/bindings/iommu/rockchip,iommu.yaml` at tag
+  `v7.2.9`, property `rockchip,disable-mmu-reset`.
+- `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
+  `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Its finding of
+  2026-08-01 on the decoder's self-reset, measured under a vendor-derived 6.18 kernel. The
+  facts are restated here, not quoted.
 - `[UBOOT]`: u-boot at commit `ece349a`. `drivers/rng/rockchip_rng.c` (`rk_trngv1_init`,
   `rk_trngv1_rng_read`). `drivers/serial/ns16550.c`, whose `ns16550_init` and
   `_debug_uart_init` write `IER` as `CFG_SYS_NS16550_IER`, 0 unless a board configuration

@@ -141,6 +141,51 @@ figure, because it takes cache sizes from the tree [source][LINUX].
 Walk set and way maintenance by the registers' geometry, and report the cache's size from
 the manual or the tree (see [caches](cpu-reference.md#caches)).
 
+### The grade is the board file's choice
+
+Mainline reads no fuse to pick its operating points. The industrial RK3588J's derated table
+exists, in `rk3588j.dtsi`, and a board gets it only by including that file [source][OPP].
+The vendor kernel reads the grade from the OTP's specification serial number instead
+[source][VENDOR].
+
+A board built on `rk3588.dtsi` therefore runs an RK3588J at up to 1800 MHz on the
+Cortex-A55s and 2400 MHz on the Cortex-A76s. Its own table stops at 1296 and 1608 MHz
+[inferred].
+
+Include `rk3588j.dtsi` in the board file of any board that carries an RK3588J (see
+[operating points](cpu-reference.md#operating-points)).
+
+### Every die gets 2400 MHz under mainline
+
+Mainline offers every RK3588 its Cortex-A76s at 2400 MHz [source][OPP]. The vendor kernel
+offers 2400 MHz only to a die whose process monitor reads at the top level, 7. Other dies
+stop at 2256 to 2352 MHz [source][VENDOR]. A slower die therefore runs above its vendor
+ceiling under mainline [inferred].
+
+Treat 2400 MHz as unproven on a given part. A board that sees instability at the top
+frequency can drop the 2400 MHz entry in its own tree (see
+[operating points](cpu-reference.md#operating-points)).
+
+## Media blocks
+
+### A stalled register access hangs the whole SoC
+
+On a Rock 5B, decode on both rkvdec cores through a vendor-derived driver stopped the
+whole SoC four times between 2026-07-29 and 2026-08-01 [reported][YSP]. Each time the log
+stopped mid-line, with no oops and nothing in pstore. Panic-on-hang settings armed
+beforehand never fired, and only a hardware watchdog brought the board back. With the
+second core unbound, the same case passed.
+
+The cause is taken to be an access to a block whose clock or power is off, or which is
+held in reset [inferred]. Such an access stalls the bus and never returns, so no CPU is
+left to report it. The access itself was never caught. On the RK3576, a read from the NPU
+with its AXI clock gated hangs the SoC the same way (see [register
+access](../rk3576/npu-reference.md#register-access)).
+
+Reach a media block's registers only with its power domain on, its clocks on and its
+resets released. While developing such a driver, keep a hardware watchdog armed and a
+serial console attached, because nothing else records the hang.
+
 ## Sources
 
 Citation keys:
@@ -174,6 +219,16 @@ Citation keys:
 - `[A76]`: Wikipedia, "ARM Cortex-A76" (`https://en.wikipedia.org/wiki/ARM_Cortex-A76`).
 - `[GIC]`: Arm, *GIC Architecture Specification, GICv3 and GICv4*, IHI 0069H.b: the
   accessibility pseudocode of the group 0 CPU interface registers.
+- `[OPP]`: Linux `arch/arm64/boot/dts/rockchip/` at tag `v7.2.9`: `rk3588-opp.dtsi`,
+  `rk3588j.dtsi`, and the includes of `rk3588.dtsi`.
+- `[VENDOR]`: the vendor kernel, rockchip-linux/kernel at commit `b4ef083dc`, branch
+  `develop-6.1`: `drivers/cpufreq/rockchip-cpufreq.c` (`rk3588_get_soc_info`),
+  `drivers/soc/rockchip/rockchip_opp_select.c` (`rockchip_set_opp_supported_hw`), and the
+  CPU tables of `arch/arm64/boot/dts/rockchip/rk3588s.dtsi`.
+- `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
+  `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Its record of
+  the four hangs, under a vendor-derived 6.18 kernel. The facts are restated here, not
+  quoted.
 
 Captures from the reference unit, kept with its evidence outside this repository:
 

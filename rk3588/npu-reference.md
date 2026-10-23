@@ -376,7 +376,9 @@ measurable at the DDR controller instead (see
 Reach the NPU's registers only with its domain powered and its clocks on, as `rocket` does from
 its runtime-PM and job paths. On the RK3576 a read with the AXI clock gated hard-hangs the SoC
 (see [register access](../rk3576/npu-reference.md#register-access)). The RK3588 is expected to
-behave the same way [expected].
+behave the same way [expected]. Silent whole-SoC hangs on the RK3588's video decoder fit
+that mechanism (see [a stalled register access hangs the whole
+SoC](corrections-and-gotchas.md#a-stalled-register-access-hangs-the-whole-soc)).
 
 ### Detaching a wedged core's MMU
 

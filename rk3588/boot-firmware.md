@@ -38,9 +38,10 @@ BL31 v1.56 carries a version-pairing message: `current trust bl31 need match wit
 ddr bin V1.13 or newer` [source][BLOB]. It pairs this BL31 with DDR firmware v1.13 or
 newer, which v1.24 meets [inferred].
 
-The pairing also runs the other way. rkbin's release note for DDR firmware v1.20 adds
-dual-channel DDR support, and requires BL31 v1.53 or later [source][RKBIN]. The two blobs
-therefore move together.
+DDR firmware v1.20 adds support for two-channel DDR. rkbin's release note ties that
+support to BL31 v1.53 or later [source][RKBIN]. The requirement belongs to the two-channel
+configuration, not to the release as a whole. A four-channel Rock 5B runs DDR firmware
+v1.20 with BL31 v1.48 [reported][YSP].
 
 ### The boot medium's layout
 
@@ -78,12 +79,37 @@ The three BL31 images the SPL reports are these segments. The SPL itself runs fr
 at 0. Every RK3588 board configuration caps it at `0x4_0000` bytes, so it ends below
 BL31's first segment [source][UBOOT].
 
+The first segment's base has moved. BL31 v1.42, v1.45, v1.48 and v1.51 load it, and enter,
+at `0x4_0000`, where the SPL's cap ends. v1.56 loads it at `0x6_0000` [source][BLOBS]. A
+Rock 5B's BL31 v1.54 loads at `0x6_0000` too [reported][YSP]. The other two segments stay
+at `0xf_0000` and `0xff10_0000`. A bootloader that places BL31 by address, rather than by
+the ELF's program headers, must follow the blob's version.
+
 The firmware's SCMI channel sits inside that 2 MiB. It is 256 bytes at `0x10f000`,
 described as `/reserved-memory/shmem@10f000` with `no-map` [measured, 2026-10-08,
 7.2.9][FDT]. No node describes a secure OS's memory [measured, 2026-10-08, 7.2.9][FDT]. The tree's
 one other reserved region, a pool for the HDMI receiver, is disabled. Its one
 `/memreserve/` holds the initial RAM disk the bootloader loaded. DRAM from 2 MiB upward is
 therefore free of firmware reservations [inferred].
+
+### Across a warm reset
+
+DRAM keeps its contents across a warm reset. A Rock 5B ran DDR firmware v1.20 and BL31
+v1.48. Its ramoops region at `0x11_8000` to `0x1e_7fff` came back intact across at least
+ten warm resets [reported][YSP]. Earlier kernel builds on the same board found the region
+zeroed after a reset, and the cause was not found.
+
+The same source maps the rest of the bottom 2 MiB by inspection [reported][YSP]:
+
+| Range | Use |
+|---|---|
+| `0x10_0000` to `0x10_ffff` | BL31's shared memory, which holds the SCMI channel at `0x10f000` |
+| `0x11_0000` to `0x11_7fff` | A debug ring of the DDR firmware |
+| `0x1f_0000` to `0x1f_ffff` | The vendor stack's reserved tail. The vendor u-boot writes its ATAGS from `0x1f_e000` |
+
+The vendor kernel places ramoops at `0x11_0000`, `0xe_0000` bytes long, over the DDR
+firmware's ring. A ramoops region placed in the bottom 2 MiB must stay clear of
+`0x10_0000` to `0x11_7fff` [inferred].
 
 ## PSCI
 
@@ -98,6 +124,13 @@ payload dispatcher has registered a handler for it [source][TFA]. OP-TEE's dispa
 registers one once OP-TEE has started, and Linux then logs
 `psci: Trusted OS migration not required` instead. The line therefore marks a chain with
 no OP-TEE running, whatever the BL31 version, as here [inferred].
+
+BL31 runs without OP-TEE. v1.56 carries a message for that case, which begins
+`No OPTEE provided by BL2 boot loader` [source][BLOB]. It goes on to say that calls meant
+for OP-TEE return `SMC_UNK`. On a Rock 5B, BL31 v1.48 logs that warning and
+`Error initializing runtime service opteed_fast`, then exits to the normal world as usual
+[reported][YSP]. The error is not fatal. A console that falls silent after it has stopped
+in a later stage, not in BL31 [inferred].
 
 ### Starting a core
 
@@ -314,7 +347,16 @@ Citation keys:
   `arch/arm/mach-rockchip/Kconfig`, which neither enable nor imply a watchdog.
 - `[DTS]`: Linux `arch/arm64/boot/dts/rockchip/rk3588-base.dtsi` at tag `v7.2.9`.
 - `[RKBIN]`: rockchip-linux/rkbin, `doc/release/RK3588_EN.md`, the entry for
-  `rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.20.bin` (2025-08-25).
+  `rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.20.bin` (2025-08-25). Its one new item adds
+  support for 2-channel DDR, and with it requires BL31 v1.53 or later.
+- `[BLOBS]`: rockchip-linux/rkbin's `bin/rk35/rk3588_bl31_v1.42.elf`, `v1.45`, `v1.48`,
+  `v1.51` and `v1.56`: the entry address and load segments of each ELF's program headers.
+- `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
+  `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Its firmware
+  findings of 2026-07-07 and 2026-07-24 (the blob versions and BL31's load address), of
+  2026-07-08 (BL31 v1.48's console without OP-TEE), and of 2026-07-28 with its ramoops
+  notes (retention across warm resets, and the bottom 2 MiB). The facts are restated here,
+  not quoted.
 
 Captures from the reference unit, kept with its evidence outside this repository:
 

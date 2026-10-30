@@ -95,6 +95,12 @@ The tree also labels DCDC1, DCDC2 and DCDC4 `vdd_gpu_mem_s0`, `vdd_cpu_lit_mem_s
 `vdd_vdenc_mem_s0` [source][DTS]. On this module each of those blocks' memory supply
 shares its logic rail [inferred].
 
+Linux's `fan53555` driver detects all three discrete regulators as `Option[10] Rev[1]`,
+from their ID registers [measured, 2026-10-05, 7.2.9][BOOTLOG]. Idle, the RK806 rails Linux
+sets read 750 mV on `vdd_log_s0` and `vdd_vdenc_s0`, and 850 mV on `vdd_ddr_s0`
+[measured, 2026-10-23, 7.2.9][REGULATORS]. The CPU rails follow the operating points, as
+[delivered frequency](../cpu-reference.md#delivered-frequency) shows.
+
 The tree names each rail for the state it serves. Every `_s0` rail is off in suspend, and
 every `_s3` rail stays on [source][DTS]. `vdd_npu_s0` and `vdd_gpu_s0` are boot-on but not
 always-on, and each is its power domain's supply [source][DTS]. Each therefore follows
@@ -203,6 +209,34 @@ The tree enables two PCIe controllers [source][DTS]:
 a 5 ms startup delay [source][DTS]. `pcie2x1l1` names no 3.3 V supply, and the carrier
 powers whatever sits behind it [inferred].
 
+Both controllers train at their full rate with a device behind them. Two modules in their
+carrier slots show the same links [measured, 2026-10-23, 7.2.9][LSPCI]:
+
+| Controller | Device | Link | ASPM |
+|---|---|---|---|
+| `pcie3x4` | An NVMe disk: a Silicon Motion SM2263 on the reference unit, a Phison E13 on the second module | 8 GT/s, x4 | L1. The root port supports no L1 substates |
+| `pcie2x1l1` | A Coral Edge TPU, on the carrier's slot | 5 GT/s, x1 | L0s |
+
+Each root port offers a 256-byte maximum payload, and Linux runs both links at 128 bytes
+[measured][LSPCI]. The second module's NVMe disk reads 1.3 GB/s sequentially with 4 MiB requests at queue
+depth 1. That tests the disk more than the link [measured, 2026-10-23, 7.2.9][DISKS].
+
+Both modules measured carry the same Samsung eMMC part, which Linux names `BJTD4R`
+[measured, 2026-10-23, 7.2.9][MMC]. Turing's specification names no part, so another module
+can carry a different one [expected]:
+
+| Property | Value |
+|---|---|
+| Manufacturer ID | `0x15`, Samsung |
+| Capacity | 29.1 GiB in the user area, two 4 MiB boot partitions, a 4 MiB RPMB partition |
+| Standard | eMMC 5.1, `EXT_CSD` revision 8 |
+| Cache | 8 MiB, enabled |
+| Mode | HS400 with Enhanced Strobe, command queueing on |
+| Manufactured | October 2022 |
+
+It reads 276 MB/s sequentially with 4 MiB requests, and 19.2 MB/s with 4 KiB requests at
+queue depth 1 [measured, 2026-10-23, 7.2.9][DISKS].
+
 ## Networking
 
 One Gigabit Ethernet port is driven by GMAC1, `ethernet@fe1c0000` [source][DTS]. u-boot
@@ -215,6 +249,12 @@ One Gigabit Ethernet port is driven by GMAC1, `ethernet@fe1c0000` [source][DTS].
 | Delays | `tx_delay` `0x43`, `rx_delay` 0 |
 | PHY | Realtek RTL8211F at MDIO address 1, `ethernet-phy-id001c.c916` |
 | PHY reset | gpio3 PB7, active low, 15 ms asserted and 50 ms settling |
+
+Linux reads GMAC1's version as `0x51` with user ID `0x30`, a DWMAC 5.1 core [measured,
+2026-10-05, 7.2.9][BOOTLOG]. The core offers checksum offload in both directions, TSO and
+Wake-on-LAN by magic packet, and addresses 32 bits of DMA (see
+[masters with no IOMMU](../system-reference.md#masters-with-no-iommu)). The link trains at
+1000 Mb/s, full duplex, with EEE negotiated but inactive [measured, 2026-10-23, 7.2.9][NET].
 
 `rgmii-rxid` asks the PHY for the receive delay alone, and the MAC's `tx_delay` supplies the
 transmit delay [source][DTS]. Linux programs the RTL8211F to match, on the PHY's page
@@ -322,6 +362,12 @@ low for its alarm against the pin's pull-up. The tree marks the clock a wake sou
 Linux 7.2.9 drives the clock as `rtc-hym8563 6-0051`. Awake, the alarm raises its
 interrupt: GPIO0's pin 8, PB0, counts one interrupt for an alarm a minute on [measured,
 2026-10-10, 7.2.9][RTCALARM].
+
+The HYM8563 flags its time invalid when its supply falls too low to keep it. After a power
+cycle, the reference unit's Linux logged `no valid clock/calendar values available`, and
+left the system time unset from the clock [measured, 2026-10-23, 7.2.9][BOOT23]. A second
+module logged the same at a boot [measured, 2026-10-05, 7.2.9][BOOTLOG]. The clock therefore
+loses its time whenever the module loses power [inferred].
 
 > **Linux 7.2.9 did not resume from suspend on the reference unit, to memory or to idle.**
 > Each was tried once. Suspended with `rtcwake -m mem` and the alarm 20 s on, Linux takes
@@ -495,7 +541,9 @@ Citation keys:
   flashing page, `turing-rk1-flashing-os`, enters maskrom through the controller's USB
   flash mode. The UART page, `tpi-uart`, gives the node-to-device table.
 
-Captures from the reference unit, kept with its evidence outside this repository:
+Captures from the reference unit, kept with its evidence outside this repository. Those
+marked as the second module's come from another 32 GB RK1, whose eMMC carries u-boot 2026.07,
+BL31 v1.51 and DDR firmware v1.19:
 
 - `[CONSOLE]`: the console from power-on to u-boot 2026.10's prompt, `version` and
   `bdinfo`, 2026-10-08.
@@ -516,3 +564,16 @@ Captures from the reference unit, kept with its evidence outside this repository
   `console_suspend` off and the log level at 8, 2026-10-10.
 - `[RTCALARM]`: the shell of Linux 7.2.9 after a power cycle, 2026-10-10: the alarm's
   interrupt count awake, then `rtcwake -m freeze`.
+- `[BOOT23]`: the reference unit's kernel log of Linux 7.2.9 after a power cycle,
+  2026-10-23.
+- `[BOOTLOG]`: the second module's kernel log of a boot of Linux 7.2.9, 2026-10-05, read
+  from the journal.
+- `[REGULATORS]`: the second module's `/sys/kernel/debug/regulator/regulator_summary`,
+  idle, 2026-10-23.
+- `[LSPCI]`: `lspci -vvv` on both modules, 2026-10-23, with the NVMe disks in use.
+- `[MMC]`: the eMMC of both modules, from `/sys/block/mmcblk0/device` and the boot log,
+  2026-10-23. On the second module, also `mmc extcsd read`.
+- `[DISKS]`: `dd` with `iflag=direct` from the second module's eMMC and NVMe disk,
+  2026-10-23, after dropping the page cache. It read 1 GiB of the eMMC in 4 MiB blocks and
+  100 MiB in 4 KiB blocks, then 4 GiB of the NVMe disk.
+- `[NET]`: the second module's `ethtool` reports for `end0`, 2026-10-23.

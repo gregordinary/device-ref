@@ -3,8 +3,9 @@
 This document covers the system blocks a bootloader or a new kernel reaches before any
 other driver. They are the address map, the interrupt controller, the timers, the UARTs
 and the true random number generator. It also covers the IOMMUs, which every media and
-accelerator driver programs. It states each block's addresses, configuration and
-registers, and the state the boot firmware leaves it in.
+accelerator driver programs, and the DMA controllers. It states each block's addresses,
+configuration and registers, and the state the boot firmware leaves it in. It closes with
+the DRAM's measured bandwidth and the thermal sensors.
 
 The document is SoC-level. Configuration facts come from Rockchip's technical reference
 manual [source][TRM] and the mainline device tree [source][DTS]. Measurements come from the
@@ -233,6 +234,11 @@ nothing at the prompt has turned it on [inferred]. A bare-metal program started 
 takes eight numbers of 32 bytes from it. None is all one byte value, and none repeats the
 one before [measured, 2026-10-09, u-boot 2026.10][FIRSTPROC].
 
+Under Linux the TRNG is the `hwrng` source `rockchip-rng`, with a quality of 999. Reading
+1 MiB from `/dev/hwrng` takes 0.30 s, about 3.4 MiB/s, and the bytes carry 7.9998 bits of
+Shannon entropy each [measured, 2026-10-23, 7.2.9][RNGRATE]. The entropy figure is a
+sanity check, not a test of the source.
+
 Neither core kind implements `RNDR` (see [ID registers](cpu-reference.md#id-registers)),
 so the TRNG is the hardware entropy a bootloader can hand on.
 
@@ -260,7 +266,12 @@ SMMUv3.
 
 Each PCIe controller maps its requester IDs to `iommu@fc900000` through `iommu-map`. Two
 controllers sit in `rk3588-base.dtsi`, and the full RK3588 adds three in
-`rk3588-extra.dtsi` [source][DTS]. The MMUs of blocks that mainline does not describe, the
+`rk3588-extra.dtsi` [source][DTS].
+
+Linux's `arm-smmu-v3` driver finds a 48-bit output address size in `iommu@fc900000`, and
+features `0x001c_1ebf` [measured, 2026-10-05, 7.2.9][BOOTLOG]. It finds no MSI domain for
+the SMMU, so the SMMU signals through its wired interrupts. Every function behind one root
+port shares an IOMMU group with the port. The MMUs of blocks that mainline does not describe, the
 VEPU580 encoders and the IEP among them, are in the
 [RK3588 video reference](video-reference.md#blocks-without-a-node).
 
@@ -386,6 +397,87 @@ without it (see [kernel configuration](video-reference.md#kernel-configuration))
 RGA2 has no IOMMU. It walks a page table of its own whose entries are 32-bit physical
 addresses, so it reaches the low 4 GiB only (see [RGA](video-reference.md#rga)).
 
+The Ethernet MACs have no IOMMU either. GMAC1 reports a 32-bit DMA address width in its
+hardware feature register, and Linux uses 32 bits for host and device [measured,
+2026-10-05, 7.2.9][BOOTLOG]. It reaches the low 4 GiB only. On a board with more memory, a
+packet buffer above 4 GiB goes through the 64 MiB software bounce buffer Linux sets up at
+boot [inferred].
+
+## DMA controllers
+
+The SoC carries three Arm PL330 DMA controllers. Linux reads the same configuration from
+each [measured, 2026-10-05, 7.2.9][BOOTLOG]:
+
+| Controller | Base |
+|---|---|
+| DMAC 0 | `0xfea1_0000` |
+| DMAC 1 | `0xfea3_0000` |
+| DMAC 2 | `0xfed1_0000` |
+
+Each has 8 channels, 32 peripheral request lines and 16 events, with a data buffer of 128
+entries of 8 bytes. The UARTs, SPI and audio interfaces take their request lines from these
+controllers [source][DTS].
+
+## DRAM bandwidth
+
+The firmware runs the DRAM clock at 2112 MHz, by its SCMI clock `scmi_clk_ddr`, under BL31
+v1.56 and v1.51 alike [measured, 2026-10-23, 7.2.9][CLK]. The DDR monitor counts four channels (see
+[DDR traffic counters](video-reference.md#ddr-traffic-counters)), and spreads a streaming
+read or write across them within 0.2 % [measured, 2026-10-23, 7.2.9][DDRCH].
+
+Streaming bandwidth from the cores reads as follows on the reference unit. Each thread works
+on its own 256 MiB buffers, 16 times [measured, 2026-10-23, 7.2.9][BW]:
+
+| Threads | Read | Write | Copy |
+|---|---:|---:|---:|
+| One Cortex-A55 | 6.07 GB/s | 22.81 GB/s | 12.15 GB/s |
+| One Cortex-A76 | 19.21 GB/s | 30.58 GB/s | 23.56 GB/s |
+| Four Cortex-A55s | 22.94 GB/s | 29.83 GB/s | 23.62 GB/s |
+| Four Cortex-A76s | 27.77 GB/s | 30.42 GB/s | 24.00 GB/s |
+| All eight | 24.60 GB/s | 29.28 GB/s | 21.96 GB/s |
+
+A second RK1 module, with slower clocks, reads and writes 4 to 9 % lower. Its copies land
+within 5 % of these (see [delivered frequency](cpu-reference.md#delivered-frequency))
+[measured][BW2].
+
+Copy counts the bytes read and the bytes written. Every policy ran at `performance`, which
+puts the DSU at 1800 MHz [inferred]. The DSU's clock follows the Cortex-A55s and sets these figures,
+as [the DSU clock](cpu-reference.md#the-dsu-clock-follows-the-cortex-a55s) shows.
+
+Four 16-bit channels at 4224 MT/s carry 33.8 GB/s [inferred]. The best write reaches 90 % of
+that, and the best read 82 %. Stores need no read for ownership. On the second module, a 4 GiB
+fill reads 0.1 GB from DRAM on a Cortex-A55 and 0.6 GB on a Cortex-A76. A copy reads only its
+source [measured, 2026-10-23, 7.2.9][BW2].
+
+The monitor's counters agree with the program's traffic, on the second module. Its write
+count lands within 1 % of the bytes written. Its read count lands 3 to 9 % above the bytes
+read [measured, 2026-10-23, 7.2.9][BW2]. An idle system moves 1.7 MB/s.
+
+## Thermal sensors
+
+The TSADC at `0xfec0_0000` reads seven sensors, on a 2 MHz clock [source][DTS]. The tree
+gives each sensor a thermal zone, with a critical trip at 115 °C:
+
+| Channel | Zone | Passive trip and cooling |
+|---|---|---|
+| 0 | `package-thermal` | None in the SoC tree. A board adds its fan here |
+| 1 | `bigcore0-thermal` | 85 °C, the `cpu4` policy |
+| 2 | `bigcore2-thermal` | 85 °C, the `cpu6` policy |
+| 3 | `littlecore-thermal` | 85 °C, the `cpu0` policy |
+| 4 | `center-thermal` | None |
+| 5 | `gpu-thermal` | 85 °C, the GPU's devfreq |
+| 6 | `npu-thermal` | None |
+
+Each passive trip has 2 °C of hysteresis, and its zone polls every 100 ms while it cools.
+Every zone's `polling-delay` is 0 [source][DTS]. A zone therefore learns of a trip from the
+TSADC's interrupt [inferred]. At 120 °C the TSADC resets the
+SoC through the CRU, with no software involved: `rockchip,hw-tshut-mode` is 0, the CRU
+[source][DTS].
+
+All seven zones read 37 to 38 °C on an idle RK1 module in its carrier, with the fan off
+[measured, 2026-10-23, 7.2.9][THERMAL]. After the bandwidth runs they read 40.7 to 42.5 °C,
+the three CPU zones highest.
+
 ## Sources
 
 Citation keys:
@@ -436,3 +528,23 @@ Captures from the reference unit, kept with its evidence outside this repository
   `cntvct_el0` against `CLOCK_MONOTONIC_RAW`.
 - `[FIRSTPROC]`: a bare-metal loader run from u-boot 2026.10, 2026-10-09, which reads the
   TRNG for a kernel's seed.
+
+Captures from a second Turing RK1 module, kept with its evidence outside this repository. It
+is a 32 GB module whose eMMC carries u-boot 2026.07, BL31 v1.51 and DDR firmware v1.19:
+
+- `[BOOTLOG]`: the kernel log of a boot of Linux 7.2.9, 2026-10-05, read from the journal.
+- `[CLK]`: `/sys/kernel/debug/clk/clk_summary` on the same boot, 2026-10-23, and on the
+  reference unit the same day.
+- `[RNGRATE]`: 256 reads of 4 KiB from `/dev/hwrng` by `dd`, timed, 2026-10-23, with the
+  byte histogram's entropy computed over the result.
+- `[BW2]`: a streaming read, fill and copy of 256 MiB per thread, 16 times, with threads
+  pinned to the cores named, 2026-10-23. `perf stat -a` counted the `rockchip_ddr` PMU's
+  `read-bytes` and `write-bytes` over each run, setup included.
+- `[DDRCH]`: the same read and fill on four Cortex-A76s, counted per channel, 2026-10-23.
+- `[THERMAL]`: `/sys/class/thermal` read before and after the bandwidth runs, 2026-10-23.
+
+Captures from the reference unit under Linux 7.2.9 with BL31 v1.56, kept with its evidence
+outside this repository:
+
+- `[BW]`: the same streaming read, fill and copy, from static builds of the same program,
+  with every cpufreq policy at `performance`, 2026-10-23.

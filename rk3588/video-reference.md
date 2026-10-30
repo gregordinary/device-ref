@@ -96,6 +96,12 @@ about 94 frames per second, however many streams share it [measured, 2026-10-07,
 Both decoders cost 0.4-0.8 CPU-s per 30 s stream. Which node a stream lands on therefore
 sets the 1080p H.264 ceiling, as [attributing a failure](#attributing-a-failure) describes.
 
+The tree assigns each rkvdec core 800 MHz for AXI, 600 MHz for its core and CABAC clocks,
+and 1 GHz for its HEVC CABAC clock [source]. The CRU delivers 786.4 MHz for AXI, from the
+audio PLL, 594 MHz for the core and CABAC clocks, and 1 GHz [measured, 2026-10-23,
+7.2.9][CLK]. The AV1 decoder's AXI clock and the JPEG encoders' run at 396 MHz, and the RGA
+cores at 750 MHz [measured][CLK].
+
 The decoder's timeout register, `0x080` (register 32), counts AXI clock cycles. Mainline
 sets it by picture size: `0xefffff` up to 1080p, `0x2cfffff` up to 4K, `0x4ffffff` up to
 8K, and `0xffffffff` above [source]. It arms its own watchdog at twice that threshold over
@@ -759,6 +765,31 @@ Every extension that ffmpeg's DRM-PRIME import requires is present:
 - `VK_EXT_queue_family_foreign`
 - `VK_KHR_sampler_ycbcr_conversion` (rev 14)
 
+Panthor reads the GPU's identity and feature registers at probe, and returns them through
+its `DEV_QUERY` ioctl [measured, 2026-10-23, 7.2.9][GPUQUERY]:
+
+| Property | Value |
+|---|---|
+| `GPU_ID` | `0xa867_0005`: architecture 10.8.6, product major 7, r0p0 |
+| `CSF_ID` | `0x040a_0412`: command stream hardware 1.0.10, MCU 1.1.2 |
+| Shader cores | `shader_present` `0x50005`, four cores |
+| L2 and tiler | One L2 (`l2_present` 1), `L2_FEATURES` `0x0712_0306` with 64-byte lines, one tiler |
+| `MEM_FEATURES` | `0x301`, coherent core groups |
+| GPU MMU | `MMU_FEATURES` `0x2830`: 48-bit virtual and 40-bit physical addresses. Eight address spaces, `AS_PRESENT` `0xff` |
+| Threads | 2,048 per core, workgroups of up to 1,024, `THREAD_FEATURES` `0x0401_0000` |
+| Coherency | `COHERENCY_FEATURES` 0: no ACE or ACE-Lite protocol. Panthor selects none |
+| Command stream interface | 8 group slots, 8 stream slots, 96 registers, 8 scoreboard slots |
+| Timestamp | 24 MHz, the system counter's rate |
+
+The GPU does not snoop the cores' caches, in line with the rest of the SoC (see
+[coherency](cpu-reference.md#coherency)). The CSF firmware reports interface v1.5.0, and
+supports no protected mode entry [measured, 2026-10-05, 7.2.9][BOOTLOG].
+
+The GPU takes its operating clock from the CRU and its voltage from `vdd_gpu_s0`. Its devfreq
+offers 300 to 1000 MHz in 100 MHz steps, under `simple_ondemand` [source]. It idles at
+300 MHz with the rail at 675 mV [measured, 2026-10-23, 7.2.9][CLK]. The `gpu-thermal` zone
+limits it at 85 °C (see [thermal sensors](system-reference.md#thermal-sensors)).
+
 Two facts matter for planning around the GPU:
 
 - `/dev/dri/renderD128` exists on a headless system with no display attached, and `card0`
@@ -1060,7 +1091,9 @@ The mainline dtsi carries no VEPU580 node [source, 7.2.9]. The port describes tw
 
 The port's tree requests 500 MHz for each core's AXI clock and 800 MHz for its core clock.
 The core clock's parents are GPLL, CPLL, AUPLL and NPLL [source]. On a Rock 5B it reads
-786,431,998 Hz, the audio PLL's rate, rather than 800 MHz [reported][YSP]. The core clock
+786,431,998 Hz, the audio PLL's rate, rather than 800 MHz [reported][YSP]. On an RK1 module
+both cores' clocks read 786,431,991 Hz from the audio PLL, and their AXI clocks 500 MHz
+[measured, 2026-10-23, 7.2.9][CLK]. The core clock
 then follows any change to the audio PLL [inferred].
 
 The encoder's output buffer must be physically contiguous, because the driver programs
@@ -1168,7 +1201,8 @@ per channel (`read-bytes0` to `3`) and in total, scaled to MB.
 
 The DRAM traffic of a decode, a filter chain or a transcode is therefore a measurement
 (`perf stat -a -e rockchip_ddr/bytes/`) rather than an argument. No figure on this page
-comes from it. The RK3576 has no mainline DFI. Its DDRMON is a newer version (0x40) that
+comes from it. Its counts agree with a known load's traffic, and its four channels split that
+traffic evenly (see [DRAM bandwidth](system-reference.md#dram-bandwidth)). The RK3576 has no mainline DFI. Its DDRMON is a newer version (0x40) that
 the driver does not know, and its support is posted upstream, unmerged.
 
 ## Related pages
@@ -1199,6 +1233,15 @@ Citation key:
   findings: 2026-07-24 on 10-bit RGA strides and the RGA2 bus error, 2026-07-28 on decoder
   timeouts, and 2026-08-16 on the encoder's clock. Each was measured under a vendor-derived
   6.18 kernel. The facts are restated here, not quoted.
+
+Captures from a Turing RK1 module under Linux 7.2.9 with BL31 v1.51, kept with its evidence
+outside this repository:
+
+- `[CLK]`: `/sys/kernel/debug/clk/clk_summary` and the regulator summary, 2026-10-23, with
+  the media blocks idle.
+- `[GPUQUERY]`: a program issuing panthor's `DRM_IOCTL_PANTHOR_DEV_QUERY` for the GPU,
+  command stream interface and timestamp information on `/dev/dri/renderD128`, 2026-10-23.
+- `[BOOTLOG]`: the kernel log of the boot, 2026-10-05, read from the journal.
 
 External sources named in the text:
 

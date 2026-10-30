@@ -9,8 +9,12 @@ the SoC's devices, the errata that apply, and the cores' operating points.
 The document is SoC-level. Register readings come from the reference unit, a Turing RK1,
 read on each core by a bare-metal program started from mainline u-boot 2026.10. Three
 further ID registers come from a NanoPi R6S, and the text says so where it cites them. Linux
-readings come from the same unit under mainline Linux 7.2.9. Configuration facts come
-from Rockchip's technical reference manual [source][TRM].
+readings come from the same unit under mainline Linux 7.2.9. Configuration facts come from
+Rockchip's technical reference manual [source][TRM].
+
+Latency, frequency and fuse readings come from the reference unit under the same Linux, with
+Rockchip's BL31 v1.56. They also come from a second RK1 module, with BL31 v1.51, and the text
+names the module wherever the two differ.
 
 ## Cores and revisions
 
@@ -119,6 +123,15 @@ No `paca`, `pacg`, `sve`, `sme` or `bti` appears. The list is system-wide and om
 any core lacks [inferred], and the per-core readings agree with it. Linux also detects the
 Virtualization Host Extensions [measured, 2026-10-08, 7.2.9][DMESG].
 
+Linux finds six event counters and the cycle counter on each kind, through
+`armv8_cortex_a55` and `armv8_cortex_a76` [measured, 2026-10-23, 7.2.9][BOOT23]. The two
+are separate perf PMUs, so a count on a Cortex-A76 names `armv8_cortex_a76`.
+
+Both kinds report hardware dirty-bit management in `MMFR1.HAFDBS`, which reads 2. Linux
+uses it on the Cortex-A76s alone, and reports it `on CPU4-7` [measured, 2026-10-23,
+7.2.9][BOOT23]. Its erratum 1024718 entry lists every Cortex-A55 revision as having broken
+dirty-bit management [source][LINUX].
+
 ## Caches
 
 The manual gives each core's caches [source][TRM]:
@@ -152,6 +165,38 @@ way maintenance walks.
 Linux on arm64 takes only each cache's level and type from the hardware, and takes the
 sizes from the device tree [source][LINUX]. Its report of the L3, 12 ways in 3 MiB, is
 therefore the tree's [measured, 2026-10-08, 7.2.9][CACHEINFO].
+
+### Measured latency
+
+A chain of dependent loads, one per 64-byte line in random order, gives each level's load
+latency. The table comes from the reference unit, with every cluster at its top operating
+point [measured, 2026-10-23, 7.2.9][LATENCY]. The clocks are the delivered ones (see
+[delivered frequency](#delivered-frequency)). The buffer sits in 4 KiB pages, so the
+largest working sets add translation misses to each load.
+
+| Working set | Cortex-A55, 1934 MHz | Cortex-A76, 2318 MHz |
+|---|---:|---:|
+| 32 KiB | 1.07 ns | 1.73 ns |
+| 96 KiB | 5.04 ns | 5.03 ns |
+| 256 KiB | 12.95 ns | 5.24 ns |
+| 1 MiB | 15.00 ns | 16.47 ns |
+| 2 MiB | 15.11 ns | 17.71 ns |
+| 3 MiB | 20.57 ns | 18.58 ns |
+| 3.5 MiB | 38.55 ns | 32.28 ns |
+| 4 MiB | 49.18 ns | 46.15 ns |
+| 8 MiB | 87.52 ns | 87.76 ns |
+| 512 MiB | 140.00 ns | 132.02 ns |
+
+The Cortex-A76's L1 hit is 4 cycles at its delivered clock, and the Cortex-A55's is 2
+[inferred]. The Cortex-A55's latency rises past 32 KiB and 128 KiB, and the Cortex-A76's
+past 64 KiB and 512 KiB, the L1 and L2 sizes the manual gives. Latency climbs
+steeply between 3 and 3.5 MiB on both kinds, the step a 3 MiB L3 gives (see
+[the L3's size](corrections-and-gotchas.md#the-l3-is-3-mib-not-the-4-mib-the-registers-give)).
+The DSU's clock sets the L3's latency, as [the DSU clock](#the-dsu-clock-follows-the-cortex-a55s)
+describes.
+
+The second RK1 module shows the same steps. Its cache hits take 6 to 8 % longer, as its
+slower clocks predict [measured, 2026-10-23, 7.2.9][LATENCY2].
 
 ## Cache maintenance
 
@@ -281,6 +326,31 @@ Mainline reads no fuse to choose or adjust these voltages. The OTP at `efuse@fec
 carries a CPU code, a CPU version and a leakage cell for each cluster [source][DTS]. No
 RK3588 device tree consumes them [source][OPP].
 
+Linux exposes the OTP as the nvmem device `rockchip-otp0`. Two dies' cells read as follows
+[measured, 2026-10-23, 7.2.9][OTP]:
+
+| Cell | Offset | Reference unit | Second module |
+|---|---|---|---|
+| CPU code | `0x02`, 2 bytes | `0x3588` | `0x3588` |
+| Specification serial number | `0x06`, bits 4:0 | `0x01` | `0x01` |
+| Leakage: Cortex-A76 cluster 0, cluster 1, Cortex-A55 | `0x17` to `0x19` | 14, 15 and 17 | 7, 7 and 9 |
+| Leakage: logic, GPU | `0x1a`, `0x1b` | 56 and 27 | 29 and 12 |
+| CPU version | `0x1c`, bits 5:3 | 1 | 1 |
+| Customer demand | `0x22`, bits 7:4 | 0 | 0 |
+| Leakage: NPU, codec | `0x28`, `0x29` | 14 and 23 | 6 and 10 |
+| Per-block operating-point information | `0x3d` to `0x6c` | All zero | All zero |
+
+A specification serial number of `0x01` names neither the RK3588M nor the RK3588J. The
+offsets of the serial number, the customer-demand bits and the operating-point information
+are the vendor tree's [source][VENDOR]. The reference unit's die leaks about twice as much in
+every cell, and its cores run faster at the same voltage (see
+[delivered frequency](#delivered-frequency)).
+
+The vendor kernel chooses its CPU, GPU and NPU voltages by PVTM rather than by leakage. It
+reads the logic and codec leakage for the memory controller, the display controller and the
+encoder [source][VENDOR]. The second module's values both map to level 0. The reference
+unit's logic leakage maps to level 2 and its codec leakage to level 1.
+
 The vendor kernel chooses per part and per die, in two steps [source][VENDOR]:
 
 1. The OTP's specification serial number names the grade. `0xd` is the RK3588M and `0xa`
@@ -305,8 +375,10 @@ level, all at 1,000 mV [source][VENDOR]:
 | 0, 1 or 4 | 2256 MHz |
 
 The level reaches the table as the second word of `opp-supported-hw`, one bit per level.
-Mainline offers 2400 MHz to every die [source][OPP]. A die below level 7 therefore runs
-faster under mainline than the vendor kernel allows it [inferred].
+Mainline offers 2400 MHz to every die [source][OPP]. Both kernels run their top point at
+1,000 mV, and above 1608 MHz the voltage sets the delivered clock (see
+[delivered frequency](#delivered-frequency)). A die below level 7 therefore runs at much the
+same clock under either kernel [inferred].
 
 One Rock 5B die reads bin 0. Its PVTM gives level 5 on the Cortex-A55s, from a reading of
 1525, and level 7 on both Cortex-A76 clusters, from 1782 and 1778 [reported][YSP]. Under
@@ -328,6 +400,89 @@ in-tree board does. Nothing checks the fuse, so an RK3588J on a board that inclu
 `rk3588.dtsi` runs the commercial table (see [the grade is the board file's
 choice](corrections-and-gotchas.md#the-grade-is-the-board-files-choice)).
 
+### Delivered frequency
+
+The secure firmware clocks the cores, through SCMI (see [SCMI](boot-firmware.md#scmi)).
+Linux sets each cluster's voltage, then asks the firmware for the rate. In mainline TF-A's
+port, the Cortex-A76 clusters run from a PVT-PLL from 816 MHz up, and the Cortex-A55
+cluster from 816 to 1800 MHz [source][TFAMAIN]. A PVT-PLL is a ring oscillator, whose
+frequency follows the die's speed at its supply [inferred].
+
+The firmware sets only the ring's length for each rate. Mainline TF-A gives the Cortex-A76
+table one length, 11, for every rate from 1608 to 2400 MHz [source][TFAMAIN]. Above
+1608 MHz the voltage therefore decides the frequency, and the rate asked for does not
+[inferred].
+
+Two RK1 modules bear that out, under Rockchip's BL31 v1.56 and v1.51. The PMU's cycle
+counter and a timed chain of dependent adds agree within 0.5 % on each [measured,
+2026-10-23, 7.2.9][FREQ][FREQ2]. The dies sat at 34 to 38 °C, and the rails read
+their operating points' voltages throughout. Each column is the mean of the two clusters.
+They differ by under 1 %:
+
+| Operating point | Rail | Cortex-A76, reference unit | Cortex-A76, second module |
+|---|---|---:|---:|
+| 1200 MHz | 675 mV | 1228 MHz | 1117 MHz |
+| 1416 MHz | 725 mV | 1562 MHz | 1419 MHz |
+| 1608 MHz | 762.5 mV | 1792 MHz | 1627 MHz |
+| 1800 MHz | 850 mV | 2022 MHz | 1846 MHz |
+| 2016 MHz | 925 mV | 2187 MHz | 2004 MHz |
+| 2208 MHz | 987.5 mV | 2303 MHz | 2115 MHz |
+| 2400 MHz | 1,000 mV | 2324 MHz | 2136 MHz |
+
+| Operating point | Rail | Cortex-A55, reference unit | Cortex-A55, second module |
+|---|---|---:|---:|
+| 1008 MHz | 675 mV | 1065 MHz | 964 MHz |
+| 1200 MHz | 712.5 mV | 1335 MHz | 1212 MHz |
+| 1416 MHz | 762.5 mV | 1550 MHz | 1414 MHz |
+| 1608 MHz | 850 mV | 1747 MHz | 1604 MHz |
+| 1800 MHz | 950 mV | 1930 MHz | 1781 MHz |
+
+The reference unit runs 8 to 11 % above the second module at every point. It runs above the
+nominal rate at all but the top one. Its die also leaks about twice as much (see the OTP
+above). The two modules also run different BL31 versions, so the measurements do not separate
+the die from the firmware. Both Cortex-A76 clusters loaded at once deliver the same as each
+alone.
+
+> **Neither cpufreq nor the SCMI clock reports the delivered frequency.** Both read the rate
+> Linux asked for at every row [measured, 2026-10-23, 7.2.9][FREQ][FREQ2]. Count cycles to
+> know what a core runs at.
+
+On both dies the 2400 MHz point gains about 1 % over 2208 MHz, since its rail is only
+12.5 mV higher. See
+[2400 MHz is a request](corrections-and-gotchas.md#2400-mhz-is-a-request-not-a-frequency).
+
+### The DSU clock follows the Cortex-A55s
+
+The DSU clocks the L3 and the clusters' path to memory. Linux describes no DSU clock. In
+mainline TF-A, setting the Cortex-A55 clock sets the DSU clock to the same rate
+[source][TFAMAIN]. The Cortex-A55s' operating point therefore sets every core's L3 latency
+and memory bandwidth.
+
+With the Cortex-A76s held at 2400 MHz, the Cortex-A55 policy alone moves the Cortex-A76s'
+results. The table gives the reference unit's latency and both modules' read bandwidth
+[measured, 2026-10-23, 7.2.9][DSUSWEEP][DSUSWEEP2]:
+
+| Cortex-A55 point | A76 latency, 1 MiB | A76 latency, 256 MiB | Four A76s, reference unit | Four A76s, second module |
+|---|---:|---:|---:|---:|
+| 1008 MHz | 22.91 ns | 147.01 ns | 16.86 GB/s | 15.23 GB/s |
+| 1200 MHz | 20.31 ns | 138.72 ns | 20.93 GB/s | 19.04 GB/s |
+| 1416 MHz | 18.68 ns | 134.53 ns | 24.02 GB/s | 22.09 GB/s |
+| 1608 MHz | 17.33 ns | 131.96 ns | 26.29 GB/s | 24.66 GB/s |
+| 1800 MHz | 16.53 ns | 129.70 ns | 27.80 GB/s | 26.66 GB/s |
+
+One Cortex-A76 alone reads 13.58 GB/s at the bottom row and 19.26 GB/s at the top, on the
+reference unit. Under the `ondemand` governor, with the Cortex-A55s idle, four Cortex-A76s
+read at the 1008 MHz row's rate on both modules [measured, 2026-10-23,
+7.2.9][DSUSWEEP][DSUSWEEP2].
+
+The vendor kernel ties the two through a frequency floor. While a Cortex-A76 cluster runs at
+a given rate, it holds the Cortex-A55 policy at no less than four fifths of it
+[source][VENDOR]. Mainline has no such floor [source][LINUX].
+
+> **Under mainline, raise the Cortex-A55 policy for memory-bound work on the Cortex-A76s.**
+> A floor on the Cortex-A55s' `scaling_min_freq` does it, or the `performance` governor.
+> Otherwise an idle Cortex-A55 cluster costs the Cortex-A76s 39 to 43 % of their bandwidth.
+
 ## Sources
 
 Citation keys:
@@ -339,7 +494,10 @@ Citation keys:
   property `reg`.
 - `[LINUX]`: Linux at tag `v7.2.9`: `arch/arm64/kernel/cpuinfo.c` (the VIPT rule),
   `arch/arm64/kernel/cacheinfo.c` (`ci_leaf_init`, which sets a cache's level and type
-  alone), and `arch/arm64/kernel/cpufeature.c` (`ARM64_HAS_CACHE_IDC`).
+  alone), and `arch/arm64/kernel/cpufeature.c` (`ARM64_HAS_CACHE_IDC`, and
+  `cpu_has_broken_dbm`, whose `ARM64_ERRATUM_1024718` entry takes every Cortex-A55).
+  `drivers/cpufreq/cpufreq-dt.c` and `cpufreq-dt-platdev.c`, which drive the RK3588's CPU
+  operating points and set no frequency floor between policies.
 - `[LINUXERRATA]`: Linux at tag `v7.2.9`, commit `5fce161`. `arch/arm64/Kconfig`:
   `ARM64_ERRATUM_2441007`, with no default, and `ARM64_ERRATUM_4118414`, default y, whose
   list names erratum 4193800. `arch/arm64/kernel/cpu_errata.c`: the MIDR ranges each option
@@ -356,7 +514,17 @@ Citation keys:
   (`rk3588_get_soc_info`), `drivers/soc/rockchip/rockchip_opp_select.c`
   (`rockchip_set_opp_supported_hw`), and the `cluster0_opp_table` to `cluster2_opp_table`
   nodes of `arch/arm64/boot/dts/rockchip/rk3588s.dtsi`, with their
-  `rockchip,pvtm-voltage-sel` tables.
+  `rockchip,pvtm-voltage-sel` tables. For the floor between clusters,
+  `rockchip_cpufreq_update_bus_req` and `cpu_to_bus_freq` in `rockchip-cpufreq.c`, and the
+  `rockchip,opp-shared-dsu` property of `cluster0_opp_table`. For the fuses, the `otp` node's
+  cells in `rk3588s.dtsi`, and the `rockchip,leakage-voltage-sel` tables of
+  `dmc_opp_table`, `vop_opp_table` and `venc_opp_table`.
+- `[TFAMAIN]`: ARM-software/arm-trusted-firmware at commit `5103554` (2026-10-05),
+  `plat/rockchip/rk3588/drivers/scmi/rk3588_clk.c`: the `rk3588_cpul_pvtpll_table` and
+  `rk3588_cpub0_pvtpll_table` tables, `clk_cpul_set_rate`, `clk_cpub01_set_rate`,
+  `clk_scmi_cpub01_get_rate`, and `clk_scmi_cpul_set_rate`, which calls
+  `clk_scmi_dsu_set_rate` with the same rate. Rockchip's BL31 is built from its own tree,
+  which is not public.
 - `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
   `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Its finding of
   2026-07-27 on the voltage levels, read from the vendor kernel 6.1.115's log and live
@@ -396,3 +564,29 @@ A capture from another RK3588 board, kept with its evidence outside this reposit
   2026-10-22. It reads the AArch64 identification block on the boot core, a Cortex-A55,
   and on a Cortex-A76 at affinity `0x400` that it starts through PSCI `CPU_ON`. It prints
   all 16 digits of each value, and the capture lost no bytes.
+
+Captures from the reference unit under Linux 7.2.9, with u-boot 2026.10, BL31 v1.56 and DDR
+firmware v1.24, kept with its evidence outside this repository:
+
+- `[BOOT23]`: the kernel log of a boot, 2026-10-23.
+- `[OTP]`: `/sys/bus/nvmem/devices/rockchip-otp0/nvmem` read as root, 2026-10-23, on both
+  modules.
+- `[LATENCY]`: a pointer chase pinned to `cpu0` and to `cpu4`, 2026-10-23. It walks one
+  64-byte line per node in a random cycle, 20 million loads per working set, with every
+  cpufreq policy at `performance`.
+- `[FREQ]`: each cpufreq operating point in turn, pinned through `scaling_min_freq` and
+  `scaling_max_freq`, 2026-10-23. At each point it timed 200 million iterations of ten
+  dependent adds by `CLOCK_MONOTONIC`, best of five, and read the rail's `microvolts` and
+  `cpuinfo_cur_freq`. A second pass at six points counted the core's cycles with `perf stat`
+  for one second under a busy loop.
+- `[DSUSWEEP]`: the Cortex-A55 policy pinned at each of its operating points with the
+  Cortex-A76 policies at `performance`, 2026-10-23. At each point the pointer chase ran on
+  `cpu4`. A streaming read of 256 MiB per thread then ran 16 times, on `cpu4` alone and on
+  `cpu4` to `cpu7`. The `ondemand` figure is the same read with every policy at `ondemand`.
+
+Captures from a second Turing RK1 module, kept with its evidence outside this repository. It
+is a 32 GB module, and its eMMC carries u-boot 2026.07, BL31 v1.51 and DDR firmware v1.19:
+
+- `[LATENCY2]`, `[FREQ2]` and `[DSUSWEEP2]`: the same three methods, 2026-10-23. `[FREQ2]`
+  counted cycles with `perf stat` at every point. Static builds of the same programs, run on
+  both modules, reproduced this module's native builds within 1 %.

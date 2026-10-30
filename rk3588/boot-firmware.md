@@ -12,6 +12,9 @@ Source reading covers the mainline Linux and u-boot trees and upstream TF-A [sou
 BL31 analysis is a disassembly of the rkbin blob [BLOB]. System sleep and its wake sources
 are owned by the [RK3588 system sleep reference](system-sleep.md).
 
+Some Linux readings come from a second RK1 module, running DDR firmware v1.19 and BL31 v1.51
+under u-boot 2026.07. The text names that firmware wherever it cites them.
+
 ## The boot chain
 
 The chain runs BootROM -> DDR firmware (TPL) -> SPL -> BL31 (TF-A) -> U-Boot -> kernel.
@@ -157,6 +160,11 @@ own tree of TF-A 2.3, and does the same [inferred].
 After `CPU_OFF`, `AFFINITY_INFO` reports the core off, and a later `CPU_ON` succeeds. All
 seven cores taken off together come back within 31 ms.
 
+The boot core cycles as well, once another core runs the system. Linux's PSCI checker takes
+every core but one off and back, the boot core among them. It then suspends each core ten
+times in `CPU_SLEEP`. Every step passes on the reference unit, and under BL31 v1.51 on a
+second module [measured, 2026-10-23, 7.2.9][BOOT23][BOOTLOG].
+
 ### Idle states
 
 The mainline tree gives every CPU one idle state, `CPU_SLEEP` [measured, 2026-10-08,
@@ -173,6 +181,15 @@ The mainline tree gives every CPU one idle state, `CPU_SLEEP` [measured, 2026-10
 The RK3576 trees carry the same state (see
 [deep idle under BL31 v1.24](../rk3576/boot-firmware.md#deep-idle-under-bl31-v124)).
 
+Linux drives the state through `psci_idle`, with the `menu` governor. It reports an exit
+latency of 220 us, the entry and exit latencies summed [measured, 2026-10-23, 7.2.9][IDLE].
+Over 17.8 days of uptime, under BL31 v1.51, every core entered `CPU_SLEEP` between 8.9 and 43
+million times. Each core spent 97 to 99 % of the uptime there, and the system ran without a
+fault [measured, 2026-10-23, 7.2.9, BL31 v1.51][IDLE].
+
+Linux counts 1.1 to 1.4 % of those entries as rejected, the entry returning an error
+[measured][IDLE]. The core then returns at once, and the idle loop carries on [inferred].
+
 ## SCMI
 
 BL31 serves an SCMI agent through SMC [measured, 2026-10-08, 7.2.9][FDT]:
@@ -184,8 +201,19 @@ BL31 serves an SCMI agent through SMC [measured, 2026-10-08, 7.2.9][FDT]:
 | Shared memory | 256 bytes at `0x10f000` |
 | Protocols | Clock (`0x14`) and reset (`0x16`) |
 
-Linux reports the agent as SCMI protocol version 2.0 [measured, 2026-10-08, 7.2.9]. The
-mainline tree takes these clocks and resets from it [source][DTS]:
+Linux reports the agent as SCMI protocol version 2.0 [measured, 2026-10-08, 7.2.9]. The agent
+names its vendor `rockchip`, with no sub-vendor and firmware version 0. BL31 v1.51 reports the
+same [measured, 2026-10-23, 7.2.9][BOOT23][BOOTLOG]. Linux then:
+
+- Sets the channel's limits at a 30 ms receive timeout, 104-byte messages and 20 messages
+  in flight.
+- Polls for the reset protocol's replies.
+- Enables its quirk `quirk_clock_rates_triplet_out_of_spec`, for the agent's clock rate
+  ranges.
+
+The SMCCC `SOC_ID` call is not implemented, so Linux registers no SoC identity from the
+firmware [measured, 2026-10-23, 7.2.9][BOOT23]. The mainline tree takes these
+clocks and resets from the agent [source][DTS]:
 
 | Consumer | SCMI clock or reset |
 |---|---|
@@ -196,6 +224,29 @@ mainline tree takes these clocks and resets from it [source][DTS]:
 | The three NPU cores | `SCMI_CLK_NPU`, one clock for all three, assigned 200 MHz (see [the NPU reference](npu-reference.md)) |
 | The SD card controller, `mmc@fe2c0000` | `SCMI_HCLK_SD` and `SCMI_CCLK_SD` |
 | The TRNG | `SCMI_HCLK_SECURE_NS`, and the reset `SCMI_SRST_H_TRNG_NS` (see [the TRNG](system-reference.md#trng)) |
+
+The agent describes more clocks than the tree consumes, and Linux registers each one. These
+are the ones no tree node names, with the rates the agent reports [measured, 2026-10-23,
+7.2.9][CLK]:
+
+| Clock | Rate |
+|---|---|
+| `scmi_clk_ddr` | 2112 MHz, the DRAM clock |
+| `scmi_clk_dsu` | Follows `scmi_clk_cpul` (see [the DSU clock](cpu-reference.md#the-dsu-clock-follows-the-cortex-a55s)) |
+| `scmi_spll` | 702 MHz |
+| `scmi_crypto_c`, `scmi_crypto_p`, `scmi_crypto_r` | 350, 350 and 175 MHz |
+| `scmi_aclk_se_ns` | 350 MHz |
+| `scmi_tclk_wdt` | 24 MHz |
+| `scmi_otp_phy`, `scmi_otpc_rd`, `scmi_otpc_arb` | 24 MHz each |
+| `scmi_dclk_sd` | 198 MHz |
+| `scmi_aclk_vop_r` | 500 MHz. BL31 v1.51 does not describe it |
+
+The CPU clocks' rates are the ones Linux asked for, not the cores' delivered frequency (see
+[delivered frequency](cpu-reference.md#delivered-frequency)). Linux finds all three CPU
+clocks at 816 MHz, a rate no operating point lists. It moves the Cortex-A55s to 1008 MHz and
+the Cortex-A76s to 1200 MHz. BL31 v1.51 leaves the same rates [measured, 2026-10-23,
+7.2.9][BOOT23][BOOTLOG]. The boot firmware therefore leaves every cluster at 816 MHz
+[inferred].
 
 ## SiP calls
 
@@ -378,3 +429,15 @@ Captures from the reference unit, kept with its evidence outside this repository
   back, and asks the firmware's `PSCI_FEATURES`.
 - `[SLEEP]`: a bare-metal sleep probe run four times from u-boot 2026.10, 2026-10-10. Each
   run stopped at its read of `PMU_WAKEUP_INT_CON`.
+
+- `[BOOT23]`: the kernel log of Linux 7.2.9 after a power cycle, 2026-10-23. The kernel is
+  built with `CONFIG_ARM_PSCI_CHECKER`.
+- `[CLK]`: `/sys/kernel/debug/clk/clk_summary` on the same boot, 2026-10-23, on this unit and
+  on the second module.
+
+Captures from a second Turing RK1 module, kept with its evidence outside this repository. Its
+eMMC carries u-boot 2026.07, BL31 v1.51 and DDR firmware v1.19:
+
+- `[BOOTLOG]`: the kernel log of a boot of Linux 7.2.9, 2026-10-05, read from the journal.
+- `[IDLE]`: each core's `cpuidle` statistics under `/sys/devices/system/cpu`, read after
+  17.8 days of uptime, 2026-10-23.

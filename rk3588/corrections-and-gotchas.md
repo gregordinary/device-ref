@@ -138,6 +138,10 @@ Arm's DSU builds a 3 MB L3 as a 4 MB one with a quarter of its ways left out, 12
 set. It reports the 4 MB geometry to software [source][DSU]. Linux reports the tree's
 figure, because it takes cache sizes from the tree [source][LINUX].
 
+The cache behaves as 3 MiB. A random chain of loads slows steeply between 3 and 3.5 MiB of
+working set, on a Cortex-A55 and on a Cortex-A76 alike. Two RK1 modules show the same step
+[measured, 2026-10-23, 7.2.9][LATENCY].
+
 Walk set and way maintenance by the registers' geometry, and report the cache's size from
 the manual or the tree (see [caches](cpu-reference.md#caches)).
 
@@ -155,16 +159,37 @@ Cortex-A55s and 2400 MHz on the Cortex-A76s. Its own table stops at 1296 and 160
 Include `rk3588j.dtsi` in the board file of any board that carries an RK3588J (see
 [operating points](cpu-reference.md#operating-points)).
 
-### Every die gets 2400 MHz under mainline
+### 2400 MHz is a request, not a frequency
 
-Mainline offers every RK3588 its Cortex-A76s at 2400 MHz [source][OPP]. The vendor kernel
-offers 2400 MHz only to a die whose process monitor reads at the top level, 7. Other dies
-stop at 2256 to 2352 MHz [source][VENDOR]. A slower die therefore runs above its vendor
-ceiling under mainline [inferred].
+Mainline offers every RK3588 its Cortex-A76s at 2400 MHz [source][OPP], and cpufreq then
+reports 2400 MHz. The vendor kernel offers 2400 MHz only to a die whose process monitor reads
+at the top level, 7. Other dies stop at 2256 to 2352 MHz [source][VENDOR].
 
-Treat 2400 MHz as unproven on a given part. A board that sees instability at the top
-frequency can drop the 2400 MHz entry in its own tree (see
-[operating points](cpu-reference.md#operating-points)).
+The firmware clocks the Cortex-A76s from a ring oscillator above 1608 MHz, with one ring
+length for every rate up to 2400 MHz [source][TFAMAIN]. The voltage then sets the frequency.
+At the 2400 MHz point, the reference unit's Cortex-A76s delivered 2.32 GHz, and a second RK1
+module's 2.14 GHz [measured, 2026-10-23, 7.2.9][FREQ]. cpufreq and the SCMI clock read
+2400 MHz on both.
+
+The point's rail sits 12.5 mV above the 2208 MHz point's, and it gains about 1 % on both
+dies. Count cycles before quoting a core's clock, and expect the delivered clock to differ
+from die to die. A board that sees instability at the top point can drop the 2400 MHz entry in its own
+tree (see [delivered frequency](cpu-reference.md#delivered-frequency)).
+
+### The Cortex-A55 policy clocks the L3
+
+The firmware sets the DSU's clock to the Cortex-A55 cluster's rate [source][TFAMAIN]. The DSU
+carries the L3 and every core's path to memory. A governor that idles the Cortex-A55s
+therefore slows the Cortex-A76s' memory traffic too.
+
+With the Cortex-A76s at their top point, four of them read 16.9 GB/s with the Cortex-A55s at
+1008 MHz, and 27.8 GB/s at 1800 MHz. A second module shows the same gap [measured,
+2026-10-23, 7.2.9][DSUSWEEP]. The vendor
+kernel holds the Cortex-A55s at no less than four fifths of the busiest Cortex-A76 cluster's
+rate [source][VENDOR]. Mainline sets no such floor.
+
+Raise the Cortex-A55 policy's floor for memory-bound work on the Cortex-A76s (see
+[the DSU clock](cpu-reference.md#the-dsu-clock-follows-the-cortex-a55s)).
 
 ## Media blocks
 
@@ -202,7 +227,9 @@ Citation keys:
   `CONFIG_DEBUG_UART_BASE` is `0xFEBC0000`, and `arch/arm/mach-rockchip/Kconfig`. Neither
   enables nor implies a watchdog.
 - `[TFAMAIN]`: ARM-software/arm-trusted-firmware at commit `5103554` (2026-10-05):
-  `plat/rockchip/rk3588/drivers/secure/secure.c` (`sgrf_init`).
+  `plat/rockchip/rk3588/drivers/secure/secure.c` (`sgrf_init`), and
+  `plat/rockchip/rk3588/drivers/scmi/rk3588_clk.c` (`rk3588_cpub0_pvtpll_table`,
+  `clk_scmi_cpul_set_rate`).
 - `[TFA]`: ARM-software/arm-trusted-firmware at tag `v2.3`, which carries no RK3588 port:
   its common Rockchip code, `plat/rockchip/common/plat_pm.c`
   (`rockchip_pwr_domain_on_finish`), and `drivers/arm/gic/v3/gicv3_main.c` and
@@ -224,7 +251,8 @@ Citation keys:
 - `[VENDOR]`: the vendor kernel, rockchip-linux/kernel at commit `b4ef083dc`, branch
   `develop-6.1`: `drivers/cpufreq/rockchip-cpufreq.c` (`rk3588_get_soc_info`),
   `drivers/soc/rockchip/rockchip_opp_select.c` (`rockchip_set_opp_supported_hw`), and the
-  CPU tables of `arch/arm64/boot/dts/rockchip/rk3588s.dtsi`.
+  CPU tables of `arch/arm64/boot/dts/rockchip/rk3588s.dtsi`. For the floor between clusters,
+  `rockchip_cpufreq_update_bus_req` and `cpu_to_bus_freq` in `rockchip-cpufreq.c`.
 - `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
   `69a3abbf`, a Rock 5B project whose documentation is licensed CC-BY-SA-4.0. Its record of
   the four hangs, under a vendor-derived 6.18 kernel. The facts are restated here, not
@@ -244,3 +272,13 @@ Captures from the reference unit, kept with its evidence outside this repository
   source leaves the calling core's SGI 1 and PPI 27 enabled, and the run prints no GIC state.
 - `[TIMERWAKE]`: a rebuilt kernel, run the same way the same day. It disables each core's SGIs
   and PPIs as the core goes down.
+
+Captures from the reference unit, with BL31 v1.56, and from a second Turing RK1 module, with
+BL31 v1.51. Both ran Linux 7.2.9, and the captures are kept outside this repository. The
+[processor reference](cpu-reference.md#sources) describes each method:
+
+- `[LATENCY]`: a pointer chase pinned to a Cortex-A55 and to a Cortex-A76, 2026-10-23.
+- `[FREQ]`: each Cortex-A76 operating point pinned in turn, with the core's cycles counted
+  and a chain of dependent adds timed, 2026-10-23.
+- `[DSUSWEEP]`: the Cortex-A55 policy stepped through its operating points with streaming
+  reads on the Cortex-A76s, 2026-10-23.

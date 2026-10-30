@@ -219,8 +219,10 @@ boot with `cpuidle.off=1`.
 
 The device-tree `CPU_SLEEP` state is identical in mainline rk3576, in mainline rk3588 and
 in the vendor's rk3576 tree. It is PSCI `CPU_SUSPEND` parameter `0x0010000`, core-off, with
-`local-timer-stop`. The RK3588 runs it without fault, so the device tree and the kernel are
-not the variable. The variable in the failing runs is the secure firmware, rkbin BL31 v1.24
+`local-timer-stop`. The RK3588 runs it without fault. Under BL31 v1.51, a Turing RK1 entered
+it up to 43 million times per core over 17.8 days [measured, 2026-10-23, 7.2.9] (see
+[the RK3588's idle states](../rk3588/boot-firmware.md#idle-states)). The device tree and
+the kernel are therefore not the variable. The variable in the failing runs is the secure firmware, rkbin BL31 v1.24
 without OP-TEE [inferred].
 
 Under that firmware, a CPU that enters `CPU_SLEEP` occasionally never gets its wakeup

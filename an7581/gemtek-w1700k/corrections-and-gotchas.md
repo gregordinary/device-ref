@@ -10,7 +10,6 @@ probed yet.
 | Published claim | Source | Fact | Evidence |
 |---|---|---|---|
 | The two RTL8261N are the "switch chipset" | [TEARDOWN] | They are the two 10G PHYs, clause 45 devices at MDIO addresses 5 and 8. The SoC's internal switch carries the 1G ports | [source][DTS] |
-| The fan controller is an NCT7511Y (W1700K) or NCT7512S (W1700K2) | FCC photographs | Linux's `nct7802` driver binds it, and reads valid voltages, fan speed and temperatures | [consensus][T546][T3337][T3340] |
 | HW1.1 carries RTL8261BE PHYs | [T2662] | HW1.1 carries RTL8261N. Its E2 SoC silicon sets it apart from HW1.0 | [reported][T2681][T3235] |
 | `strings /dev/mtd1` gives the vendor U-Boot's version | The OpenWrt wiki | On the OpenWrt layout `mtd1` is the chainloader. The vendor U-Boot is in `mtd0` | [consensus][T3449][T3450] |
 | TFTP from U-Boot works on the 10G port next to the 1G ports | The OpenWrt wiki | The vendor U-Boot reaches only the 1G ports, and on HW2.1 brings up no 10G port | [consensus][T3364][T3365][B504] |
@@ -47,11 +46,11 @@ Keep the SPI clock at the tree's 50 MHz.
 
 ### The Airoha UART baud divider
 
-On OpenWrt's 6.18 kernels, the `airoha,en7523-uart` ports run at twice the rate they are set
-to [reported][T3788][T3804]. Configure ttyS1 at 230400 to talk to the EFR32 at 115200
-[reported][T3805]. On ttyS2, a setting of 460800 gives the GNSS receiver's 921600. A fix
-exists in a community tree, commit `39b52709` [reported][T3804]. Check the rate on a scope
-before blaming the peripheral.
+On OpenWrt's 6.18 kernels, the `airoha,en7523-uart` ports run at the wrong rate for some
+settings [reported][T3788][T3804]. Configure ttyS1 at 230400 to talk to the EFR32 at 115200
+[reported][T3805]. On ttyS2, a setting of 460800 gives the GNSS receiver's 921600, and 230400
+gives 230400 [reported][T3788][T3804]. A fix exists in a community tree, commit `39b52709`
+[reported][T3804]. Check the rate on a scope before blaming the peripheral.
 
 ### A missing NPU firmware looks like a brick
 
@@ -94,10 +93,10 @@ Citation keys:
   OpenWrt's `mtk_bmt`.
 - `[TEARDOWN]`: hungvu.tech, "Quantum Fiber W1700K teardown, board view, and UART pins",
   2024-10-01.
-- `[FCC2]`: Gemtek's FCC filing for FCC ID MXF-W1700K2, downloaded from fccid.io. Its
-  exhibits read were "Internal Photos 1" and "Internal Photos 2" (project EP560201-02) and
-  "Test Report BLE" (FR560201AE, Rev. 01, 2025-09-02). Also the "Antenna Test Report" and
-  the 6 GHz test report (FR560201-02AO).
+- `[FCC2]`: Gemtek's FCC filing for FCC ID MXF-W1700K2, downloaded from fccid.io. The
+  exhibits read are "Internal Photos 1" and "Internal Photos 2" (project EP560201-02), and
+  "Test Report BLE" (FR560201AE, Rev. 01, 2025-09-02). The "Antenna Test Report" and the
+  6 GHz test report (FR560201-02AO) were read as well.
 - `[FCCAPI]`: the FCCID.io API's `/frequency` records for MXF-W1700K2, MXF-W1700K,
   MXF-W1701K and MXF-XR1710G, queried 2026-11-08 UTC. They are FCC-sourced grant rows held by
   FCCID.io (fccid.io), marked complete.

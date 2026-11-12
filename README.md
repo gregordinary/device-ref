@@ -1,15 +1,16 @@
 # device-ref
 
-Hardware reference for a set of SoCs, board families, boards and discrete chips. The chips are
-Rockchip SoCs, the Airoha AN7581, the MediaTek MT7996 and the Silicon Labs EFR32MG21.
+Hardware reference for a set of SoCs, board families, boards and discrete chips. The SoCs are
+Rockchip's RK3288, RK3576 and RK3588 and the Airoha AN7581. The discrete chips are the
+MediaTek MT7996 Wi-Fi chip and the Silicon Labs EFR32MG21 radio.
 
 ## Layout
 
-The tree is ordered by SoC > Family > Board:
+The tree is ordered by SoC > Family > Board, with a folder of its own for each discrete chip:
 
 - SoC folders hold the documents that hold for every board on that SoC.
 - Family folders appear only where several boards share documents, e.g., the Veyron Chromebooks.
-- Board folders holds what is true of that board alone.
+- Board folders hold what is true of that board alone.
 - Chip folders hold what is true of a discrete chip, such as a Wi-Fi chip, on any board that
   carries it.
 

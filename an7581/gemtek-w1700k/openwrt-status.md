@@ -56,7 +56,7 @@ reference unit. A row's date is the date of the newest post or commit it rests o
 | Inline IPsec engine | Not supported. An RFC driver is posted | [reported][T3571][T3668] | [Crypto](../system-reference.md#crypto) |
 | Fan and hardware monitor | Works, on the vendor fan curve | [consensus][T3489][B15], [source][BASEFILES] | [Cooling](hardware-reference.md#cooling-and-monitoring) |
 | LEDs and reset button | Works. The 10G port LEDs from 2026-09-24 | [source][DTS][HISTORY] | [GPIO assignments](hardware-reference.md#board-gpio-assignments) |
-| GNSS on ttyS2 | Works with an out-of-tree baud fix | [reported][T3759][T3804], 2026-07 | [AG3352Q](hardware-reference.md#ag3352q-gnss) |
+| GNSS on ttyS2 | Works at 921600, set as 460800 without the baud fix | [reported][T3759][T3804], 2026-07 | [AG3352Q](hardware-reference.md#ag3352q-gnss) |
 | EFR32 on ttyS1 | Works at 115200, set as 230400 without the baud fix. Zigbee NCP, OpenThread RCP and multiprotocol RCP firmware run after a BGAPI DFU flash | [consensus][T3718][T3803][T3805][T3962], 2026-09 | [EFR32MG21](hardware-reference.md#efr32mg21) |
 
 `5808e5db4be0` fixes a Wi-Fi to LAN regression for layouts with 802.1Q subinterfaces in
@@ -73,8 +73,8 @@ These builds were most discussed as of 2026-11-07 [consensus][B527][B530]:
 | OpenWRT-fanboy `ubi2` | Main, rebuilt daily | Bridge flowtable offload, `lan2` link fixes, the regulatory patch, more packages |
 | `-oc` variants of either | As above | CPU table shifted 200 MHz up at unchanged voltages |
 
-The `-oc` table runs each frequency 200 MHz above the one its voltage was set for. With the
-frequency capped at 1200 MHz, those builds stop panicking [reported][YMXS].
+The AN7581's [operating points](../system-reference.md#operating-points) give the panics an
+`-oc` table causes on some units.
 
 ## Sources
 
@@ -89,8 +89,6 @@ Citation keys:
   `an7581-w1700k-ubi.dts`, `image/an7581.mk`, and `base-files/etc/init.d/airoha_fan`.
 - `[SNAPSHOT]`: downloads.openwrt.org/snapshots/targets/airoha/an7581/, build
   `r38181-85e54359cf` of 2026-11-07: `profiles.json` and the sysupgrade image's FIT header.
-- `[YMXS]`: ymxs/w1700k-openwrt at commit `fda97fb`, `BUG_REPORT.md`: three kernel panics on a
-  `-oc` build, with the CPU table and the voltage table compared.
 - `[T<n>]`: post n of the OpenWrt forum thread "Quantum Fiber W1700k support", topic 222776,
   read 2026-11-07.
 - `[B<n>]`: post n of the OpenWrt forum thread "Gemtek W1700K Community Builds", topic 249319,

@@ -33,8 +33,8 @@ Related documents:
 | Console | ttyS0, 115200 baud, on a 5-pin header |
 | Power | 12 V DC barrel input |
 
-The teardown and the forum's opening post give 2 GiB of RAM, 512 MB of storage, two 10G
-ports and two 1G ports [reported][TEARDOWN][T1].
+Sources: [reported][TEARDOWN][T1] for the memory, storage and ports. The sections below cite
+the rest.
 
 ## Identity
 
@@ -45,7 +45,7 @@ names [source][IMAGE]. The `-ubi` names belong to OpenWrt's flash layout, not to
 variant (see [boot chain and flash layout](boot-and-flash.md)).
 
 The stock firmware's tree is compatible with `econet,en7581` [reported][T30]. EcoNet is
-Airoha's former name, and the stock bootloader and environment still carry it
+Airoha's former name, and the stock bootloader and environment carry it
 [reported][TEARDOWN].
 
 The MXF-W1700K grant dates from 2023-10-06. A class II permissive change on 2024-04-09 added
@@ -79,7 +79,7 @@ Three hardware revisions are on the market [consensus][T3417][T3649]:
   [consensus][T3453][T3495][T3683]. The two need different drivers and firmware (see
   [Ethernet](#ethernet)).
 - **Flash:** units of every revision carry a Winbond W25N04KV. Some later units carry a
-  W25N04LV [reported][T3990][B505]. The stock bootloader AXON 2.5 recognises the W25N04L
+  W25N04LV [reported][T3990][B505]. The stock bootloader AXON 2.5 recognizes the W25N04L
   part [reported][T3273].
 - **Board straps:** the stock firmware reads the revision from GPIOs. The major number is
   2 x GPIO30 + GPIO18, and the minor number 2 x GPIO45 + GPIO44 [source][SDR].
@@ -108,20 +108,21 @@ The community installer accepts serial numbers that start with `W1700K`, `W1701K
 | Wi-Fi baseband | MediaTek MT7996AV | PCIe |
 | Wi-Fi RF | MediaTek MT7976GN (2.4 GHz), MT7977BN and MT7977AN (5 and 6 GHz) | SPI from the MT7996 |
 | 10G PHYs | 2x Realtek RTL8261N (HW1.x) or RTL8261CE (HW2.1) | USXGMII, MDIO 5 and 8 |
-| Hardware monitor and fan controller | Nuvoton NCT7802 | i2c0, `0x2e` |
+| Hardware monitor and fan controller | Nuvoton NCT7511Y or NCT7512S, driven as an NCT7802 | i2c0, `0x2e` |
 | Bluetooth LE and 802.15.4 | Silicon Labs EFR32MG21A010F512 | ttyS1 |
 | GNSS | Airoha AG3352Q | ttyS2 |
 
-The part markings come from the teardown's photographs [reported][TEARDOWN]. The SPI clock and the
-monitor's address come from OpenWrt's trees [source][DTS][DTSI].
+The part markings come from the teardown's photographs [reported][TEARDOWN]. The SPI clock
+and the monitor's address come from OpenWrt's trees [source][DTS][DTSI].
 
 The two DRAM packages of both FCC samples carry Micron's logo and the code `D8BPK`, where the
 teardown's unit carries ESMT parts [source][FCC][FCC2][reported][TEARDOWN].
 
 The FCC photographs mark the monitor NCT7511Y on the W1700K and NCT7512S on the W1700K2
-[reported][T3337][SDR]. The W1700K2 sample's SOIC-14 under the SoC reads `NCT7512S`
-[source][FCC2]. Linux binds the `nct7802` driver on both, and it reads valid voltages,
-temperatures and fan speed [consensus][T546][T3340].
+[reported][T3337][SDR]. Units of either revision can carry either part [reported][T3337].
+The W1700K2 sample's SOIC-14 under the SoC reads `NCT7512S` [source][FCC2]. Linux binds the
+`nct7802` driver on both, and it reads valid voltages, temperatures and fan speed
+[consensus][T546][T3340].
 
 ## Ethernet
 
@@ -187,9 +188,9 @@ The MT7996 attaches through two PCIe interfaces [consensus][T50][T275][SDR]:
 | Primary | `14c3:7990` | pcie0 at `0x1fc0_0000`, with pcie1's MAC as its second lane | x2 | Every band |
 | Second | `14c3:7991` | pcie2 at `0x1fc4_0000`, over the USB1 PHY's SerDes | x1 | A second DMA path to the same chip |
 
-The chip's reset line reaches no SoC GPIO: a sweep of every GPIO found none [reported][T1172][T1201]. The
-[MT7996 reference](../../mt7996/wifi-reference.md) describes the chip, its bands and its
-firmware.
+The chip's reset line reaches no SoC GPIO: a sweep of every GPIO found none
+[reported][T1172][T1201]. The [MT7996 reference](../../mt7996/wifi-reference.md) describes
+the chip, its bands and its firmware.
 
 OpenWrt describes one MT7996 node with three bands, band 0 (2.4 GHz), band 1 (5 GHz) and
 band 2 (6 GHz) [source][DTS]. It reads the chip's calibration EEPROM, 0x1e00 bytes, from the
@@ -228,8 +229,9 @@ The two FCC samples' chips differ in silicon revision [source][FCC][FCC2]:
 
 In the marking, `H` is the 512 kB flash code and the third line's first letter is the silicon
 revision [source][DS]. Revision D has its own electrical tables (see the
-[EFR32MG21 reference](../../efr32mg21/radio-reference.md#ordering-code)). A Simplicity Commander readout of one unit gave `EFR32MG21A010F512IM32-B`, with
-debug lock and secure boot disabled and device erase enabled [reported][DOER].
+[EFR32MG21 reference](../../efr32mg21/radio-reference.md#ordering-code)). A Simplicity
+Commander readout of one unit gave `EFR32MG21A010F512IM32-B`, with debug lock and secure
+boot disabled and device erase enabled [reported][DOER].
 
 #### Wiring
 
@@ -246,19 +248,20 @@ debug lock and secure boot disabled and device erase enabled [reported][DOER].
 
 Sources: [consensus][GTX][DOER] for the UART and the GPIOs, [reported][DOER] for J10,
 [source][FCC][FCC2] for the crystal. The crystal is marked `38` on the W1700K sample and
-`38.400` on the W1700K2 sample. Linux's sysfs numbers GPIO24 and GPIO25 as 536 and 537, from a gpiochip base
-of 512 [reported][GTX].
+`38.400` on the W1700K2 sample. Linux's sysfs numbers GPIO24 and GPIO25 as 536 and 537, from
+a gpiochip base of 512 [reported][GTX].
 
 J10 is a 2 x 5 header position at 1.27 mm pitch, in Silicon Labs' Mini Simplicity layout.
 Pin 1 is VTARGET and pin 2 GND [reported][DOER]. Retail units leave it unpopulated
-[reported][DOER], and the W1700K2 FCC sample carries a fitted header [source][FCC2]. J10's pins 4 and 5 share their wires with
-the SoC's UART, so a debug adapter on them contends with ttyS1 [reported][DOER].
+[reported][DOER], and the W1700K2 FCC sample carries a fitted header [source][FCC2]. J10's
+pins 4 and 5 share their wires with the SoC's UART, so a debug adapter on them contends with
+ttyS1 [reported][DOER].
 
-No firmware uses CTS or RTS. Whether the board wires them is disputed: two posters read the
-layout as wired [reported][T511][T555], and two pin maps show only TX and RX
+No firmware uses CTS or RTS. The board's wiring of those two lines is disputed. Two posters
+read the layout as wired [reported][T511][T555], and two pin maps show only TX and RX
 [reported][GTX][DOER]. The Airoha 16550 driver has no automatic flow control
 [reported][T511]. Community builds for the board use USART0 on PA05 and PA06 without flow
-control, with HFXO CTUNE 128 [source][SWB][GTX].
+control, with HFXO CTUNE 128 [source][SWB], [reported][GTX].
 
 #### Factory firmware
 
@@ -272,8 +275,9 @@ stack shipped in Gecko SDK 4.1.3, and 6.2.0 in Gecko SDK 4.3.2 (see the
 [EFR32MG21 reference](../../efr32mg21/radio-reference.md#firmware-and-host-protocols)). The
 HW1.x unit's revision is [inferred] from its date: the post predates HW2.1's bootloader. The
 HW1.x image identifies itself as `W1700K_Axon_BLE` `v0.1` [reported][T504]. A stray byte on
-ttyS1 draws `a0 03 01 06 4a 00 00` from it [consensus][Z2M][T513]. That is a Gecko SDK NCP's
-incomplete-command error, and its `0x4a` showed on a terminal as "J" [reported][T475].
+ttyS1 draws `a0 03 01 06 4a 00 00` from it [consensus][Z2M][T513], the incomplete-command
+event the [EFR32MG21 reference](../../efr32mg21/radio-reference.md#telling-the-firmware-apart)
+describes.
 
 The factory bootloader speaks BGAPI UART DFU at 115200 baud without flow control, and no
 XMODEM [consensus][GTX][DOER]. It boots unsigned applications and ignores `dfu_reset`
@@ -287,10 +291,11 @@ On HW2.1, it does not install an unsigned bootloader upgrade [reported][T3962][G
 - **By command, HW2.1:** the factory NCP takes `user_reset_to_dfu`, `20 00 ff 02`
   [reported][GTX].
 - **By command, the 4.2.1 image:** `system_reset` in DFU mode boots the application
-  [reported][DOER]. The chip reference explains why.
+  [reported][DOER]. The chip reference's [entry](../../efr32mg21/radio-reference.md#entry)
+  section explains why.
 
 A GPIO24 and GPIO25 sequence in [T3608] restarted the application. That sequence released
-GPIO25 before GPIO24, so the pin was already inactive as RESETn rose [inferred].
+GPIO25 before GPIO24, so the activation pin was already inactive as RESETn rose [inferred].
 
 > [!CAUTION]
 > **Dump the EFR32's flash over SWD before a device erase.** A device erase removes the
@@ -312,12 +317,13 @@ MXF-W1700K tests used [source][FCC2]. Its photographs show the same printed ante
 JB1 [source][FCC2]. Its antenna report lists that antenna with a U.FL connector, where its
 Bluetooth report gives none [source][FCC2].
 
-The MXF-W1700K filing's simultaneous-transmission tables pair Bluetooth or Thread only with 5 and 6 GHz
-Wi-Fi, never with 2.4 GHz Wi-Fi [source][FCC]. That fits a declared rule that the two never
-transmit together [inferred]. Gemtek's block diagram shows grant, request and priority lines
-between the MT7996 and the EFR32 [reported][T3962]. The MXF-W1700K filing holds its block
-diagram as confidential [source][FCC]. The EFR32 pins of those lines are unknown, and the factory
-application sets up no pin beyond PA05 and PA06 [reported][GTX][T3988].
+The MXF-W1700K filing's simultaneous-transmission tables pair Bluetooth or Thread only with
+5 and 6 GHz Wi-Fi, never with 2.4 GHz Wi-Fi [source][FCC]. The pairing fits a declared rule
+that the EFR32 and 2.4 GHz Wi-Fi never transmit together [inferred]. Gemtek's block diagram
+shows grant, request and priority lines between the MT7996 and the EFR32 [reported][T3962].
+The MXF-W1700K filing holds its block diagram as confidential [source][FCC]. The EFR32 pins of
+those lines are unknown, and the factory application sets up no pin beyond PA05 and PA06
+[reported][GTX][T3988].
 
 The board's own 2.4 GHz Wi-Fi reaches the EFR32 strongly. With Wi-Fi on channel 11, 802.15.4
 channel 20 saw −14 to −26 dBm of noise, and with Wi-Fi on channel 1, −52 dBm
@@ -332,8 +338,9 @@ An Airoha AG3352Q GNSS receiver sits under its own shield on the heatsink side
 6 GHz band [reported][T431][T2596]. Its firmware reports
 `Project Version: AG3352Q_V2.6.0.AG3352_20221230` [reported][T3788]. Its connections:
 
-- **UART:** it sits on ttyS2, the SoC's HSUART. Its line runs at 921600 baud, which Linux
-  reaches only with a corrected baud divider (see [UARTs](#uarts)) [reported][T3788][T3804].
+- **UART:** it sits on ttyS2, the SoC's HSUART. Its line runs at 921600 baud, which a
+  setting of 460800 gives on OpenWrt's 6.18 kernels (see [UARTs](#uarts))
+  [reported][T3788][T3804].
 - **Control:** SoC GPIOs 13 and 14 reach the receiver. The stock firmware names them power
   control and notify [reported][T3982].
 - **PPS:** its PPS output, pin 18, reaches test point TP153 and no SoC pin [reported][T4000].
@@ -381,15 +388,15 @@ The tree's `serial0` alias is `uart1`, and its `stdout-path` is `serial0:115200n
 [source][DTS].
 
 > [!CAUTION]
-> **The Airoha UARTs run at twice the requested baud on OpenWrt's 6.18 kernels.** The
-> `uart2` driver needs 230400 to talk at 115200, and 460800 on ttyS2 gives 921600
+> **The Airoha UARTs run at the wrong baud for some settings on OpenWrt's 6.18 kernels.**
+> ttyS1 needs a setting of 230400 to talk at 115200, and 460800 on ttyS2 gives 921600
 > [reported][T3788][T3804]. A fix exists out of tree (see the
 > [corrections](corrections-and-gotchas.md#the-airoha-uart-baud-divider)).
 
 ## Memory and storage
 
 The DRAM is 2 GiB of DDR4 at 2666 MT/s, from `0x8000_0000` [consensus][T153][T2743][TEARDOWN].
-The SoC's firmware and offload engines keep about 200 MiB of it (see the
+The SoC's firmware and offload engines keep 170 MiB of it (see the
 [system reference](../system-reference.md#memory)). Linux reports
 `Memory: 1863940K/2097148K available` on an OpenWrt 6.12 build [reported][T3453].
 
@@ -473,8 +480,7 @@ upgrade, green for normal running [source][DTS]. The stock firmware shows red wh
 green when up [reported][T482].
 
 The tree's GPIO controller maps 50 GPIOs, from pin 13 of the pin controller [source][DTS].
-GPIO input registers sit at `0x1fbf_0204` (GPIO0-31) and `0x1fbf_0270` (GPIO32-63)
-[reported][T3983].
+The [system reference](../system-reference.md#gpio-and-pin-mux) gives the GPIO registers.
 
 ## The case
 
@@ -504,14 +510,14 @@ Citation keys:
   2024-10-01. It carries part photographs, the console pinout, the stock U-Boot's commands and
   environment, and a stock boot log from firmware `WXK001-05.00.30.64`.
 - `[FCC]`: Gemtek's FCC filing for FCC ID MXF-W1700K, with grants of 2023-10-06, 2024-04-09
-  and 2025-03-17. Its public exhibits "Internal Photos-1", "Test Report_BLE", "MPE", "RF
-  Exposure", "Test Report_Co-Location" and "Antenna Test Report-3" were read. So was the
-  class II permissive change's cover letter, all from the Internet Archive's copies of
-  fcc.report and fccid.io. No exhibit of the MXF-W1700K2 filing was read.
-- `[FCC2]`: Gemtek's FCC filing for FCC ID MXF-W1700K2, downloaded from fccid.io. Its
-  exhibits read were "Internal Photos 1" and "Internal Photos 2" (project EP560201-02) and
-  "Test Report BLE" (FR560201AE, Rev. 01, 2025-09-02). Also the "Antenna Test Report" and
-  the 6 GHz test report (FR560201-02AO).
+  and 2025-03-17, read from the Internet Archive's copies of fcc.report and fccid.io. The
+  exhibits read are "Internal Photos-1", "Test Report_BLE", "MPE", "RF Exposure", "Test
+  Report_Co-Location" and "Antenna Test Report-3", and the class II permissive change's
+  cover letter.
+- `[FCC2]`: Gemtek's FCC filing for FCC ID MXF-W1700K2, downloaded from fccid.io. The
+  exhibits read are "Internal Photos 1" and "Internal Photos 2" (project EP560201-02), and
+  "Test Report BLE" (FR560201AE, Rev. 01, 2025-09-02). The "Antenna Test Report" and the
+  6 GHz test report (FR560201-02AO) were read as well.
 - `[FCCAPI]`: the FCCID.io API's `/frequency` records for MXF-W1700K2, MXF-W1700K,
   MXF-W1701K and MXF-XR1710G, queried 2026-11-08 UTC. They are FCC-sourced grant rows held by
   FCCID.io (fccid.io), marked complete.

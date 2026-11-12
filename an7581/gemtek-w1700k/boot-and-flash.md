@@ -1,8 +1,8 @@
 # Gemtek W1700K boot chain and flash layout
 
 This document states how the W1700K boots and how its 512 MiB SPI NAND is laid out, under the
-stock firmware and under OpenWrt. It also states which parts of the flash each stage owns. The reader is
-porting a bootloader or an operating system to the board, or recovering one. The
+stock firmware and under OpenWrt. It also states which parts of the flash each stage owns.
+The reader is porting a bootloader or an operating system to the board, or recovering one. The
 [hardware reference](hardware-reference.md) states the board's parts. The
 [AN7581 system reference](../system-reference.md#boot-security) states the SoC's boot ROM.
 
@@ -21,7 +21,7 @@ No reference unit has been probed yet. Every claim here is `[source]`, `[consens
 | Chainloader (OpenWrt) | U-Boot 2026.x, FIT | Flash `0x60_0000`, 1 MiB | OpenWrt |
 | OpenWrt | FIT: Linux 6.18 and squashfs | UBI volume `fit` | OpenWrt |
 
-`tcboot.bin` is 540,672 bytes. It holds BL2 at offset 0 with its DRAM initialisation at
+`tcboot.bin` is 540,672 bytes. It holds BL2 at offset 0 with its DRAM initialization at
 `+0x4420`, BL31 at `+0x2_0000`, and the LZMA-packed vendor U-Boot at `+0x2_a400`
 [source][SDR]. The vendor U-Boot runs from `0x81e0_0000` [source][SDR].
 
@@ -53,7 +53,7 @@ bootloader along with the system [reported][T3274].
 The vendor U-Boot prints `Hit any key to stop autoboot`, waits `bootdelay=4` seconds, and then
 gives the prompt `ECNT>` [consensus][T143][TEARDOWN]. Its commands include `flash`,
 `tftpboot`, `bootm`, `setenv`, `saveenv`, `printenv`, `md`, `mw`, `mdio`, `efuse`, `gpio`,
-`imginfo`, `iminfo`, `loadb`, `loadx`, `loady` and `reset` [source][TEARDOWN][T98]. It has
+`imginfo`, `iminfo`, `loadb`, `loadx`, `loady` and `reset` [consensus][TEARDOWN][T98]. It has
 no `reboot` command [reported][T2298].
 
 `flash` takes `init`, `erase`, `read`, `write`, `dumpbmt` and `imgread` [reported][T98]. Its
@@ -69,7 +69,7 @@ Two load paths exist, and only one verifies a signature [source][SDR]:
 | `flash imgread 2048; bootm` | BL31 verifies the image against a SHA-512 root-key digest in eFuse |
 | `flash read <offset> <length> $loadaddr; bootm` | `bootm` checks the FIT's own hashes only |
 
-The stock `bootcmd` is `flash imgread 2048;bootm` [source][TEARDOWN]. A failed check prints
+The stock `bootcmd` is `flash imgread 2048;bootm` [reported][TEARDOWN]. A failed check prints
 `verify kernel:0x600000 error` and `Verify image fail`, or
 `ERROR: BL31: Failed to verify image id 5 (-80)` [consensus][T100][T153][T3886]. The
 chainloader boots by the second path [source][CHAINLOADER].
@@ -83,7 +83,7 @@ AXON 1.6 passes its environment to the kernel as boot arguments, including
 
 ### Environment
 
-The environment is 16 KiB, in the `uenv` partition [source][TEARDOWN]. These variables bear on
+The environment is 16 KiB, in the `uenv` partition [reported][TEARDOWN]. These variables bear on
 a port [consensus][TEARDOWN][T334][T3941]:
 
 | Variable | Stock value | Meaning |
@@ -113,9 +113,9 @@ It offers two TFTP modes:
 - **Client:** `tftpboot <address> <file>` fetches from the host the environment's `serverip`
   names.
 - **Server:** with no file named, it listens for a client to send `tclinux.bin` to the
-  environment's `ipaddr` [source][T98][T174].
+  environment's `ipaddr` [consensus][T98][T174].
 
-The client gives up after ten timeouts, and its CPU port inherits a 5 Mbit/s egress rate
+The client gives up after ten timeouts, and its CPU port inherits a 5 Mb/s egress rate
 limit from the switch [reported][SDR].
 
 > [!CAUTION]
@@ -126,7 +126,7 @@ limit from the switch [reported][SDR].
 ## The vendor bad-block area
 
 The vendor U-Boot keeps a bad-block table and a pool of replacement blocks at the end of the
-flash, which Linux knows nothing of [source][CHAINLOADER][T3039]. The area has three parts:
+flash, unknown to Linux [source][CHAINLOADER], [reported][T3039]. The area has three parts:
 
 - **Pool:** 250 erase blocks, `0x1e0c_0000` to the end of flash. The vendor U-Boot prints
   `bmt pool size: 250` and `BMT & BBT Init Success` [consensus][T143][T2743][SDR].
@@ -151,7 +151,7 @@ OpenWrt's tree marks `reserved_bmt` read-only and binds no bad-block driver to t
 
 The stock kernel's partition string is
 `2m[bootloader],2m[uenv],2m[dsd],64m[tclinux],64m[tclinux_slave],312m[system]`
-[source][TEARDOWN][SDR]:
+[source][SDR], [reported][TEARDOWN]:
 
 | Partition | Start | End | Size | Contents |
 |---|---|---|---|---|
@@ -234,7 +234,7 @@ interact as follows:
 
 - **Moving between layouts:** sysupgrade refuses an image whose compat version differs. Its
   message begins "Partition table has been changed to cooperate with the vendor bootloader"
-  [source][IMAGE][T3907]. A unit moves by rewriting the chainloader and running the installer.
+  [source][IMAGE], [reported][T3907]. A unit moves by rewriting the chainloader and running the installer.
 - **Telling them apart:** the chainloader's tree carries its `reserved_bmt` node.
   `strings /dev/mtd1 | grep reserved_bmt` prints `reserved_bmt@1be00000` on 2.0 and
   `reserved_bmt@1fe00000` on 1.0 [consensus][T3846][T3696].
@@ -313,10 +313,10 @@ OpenWrt writes it.
 | `chainloader` | Interrupt the vendor U-Boot and rewrite `0x60_0000` |
 | `vendor` | The boot ROM's XMODEM loader. It accepts a BL2 signed with the fused key only |
 
-Holding GPIO0, the reset button, low at power-on starts the boot ROM's loader. It prints
-`Press x` and then takes XMODEM [reported][T511][T565]. With the key fused, the boot ROM
-accepts only a FIP whose BL2 carries the key's signature. The proprietary BL2 then offers to
-write the upload over the first 512 KiB of flash [reported][T565].
+Holding GPIO0, the reset button, low at power-on starts the boot ROM's XMODEM loader
+[reported][T511][T565]. The AN7581's [boot security](../system-reference.md#boot-security)
+states what the loader accepts. The proprietary BL2 then offers to write the upload over the
+first 512 KiB of flash [reported][T565].
 
 A unit with no console output at all was brought to the chainloader menu in RAM through that
 loader. It did not survive a power cycle [reported][T3681][T3687][T3703].

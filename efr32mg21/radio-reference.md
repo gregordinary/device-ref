@@ -157,8 +157,8 @@ default of 1, a CTUNE value stored as a manufacturing token takes precedence
 
 The chip has three USARTs and no EUSART [source][DS][RM]. Each USART runs an asynchronous
 UART with RTS/CTS flow control [source][DS]. Two internal buses route their signals: one
-serves ports A and B, the other ports C and D [source][RM]. So the USARTs differ in the pins
-they reach [source][DS]:
+serves ports A and B, the other ports C and D [source][RM]. The USARTs therefore differ in the
+pins they reach [source][DS]:
 
 | USART | Ports |
 |---|---|
@@ -279,8 +279,8 @@ protocol, because every protocol component supplies the same entry points
 | SPI EZSP | EmberZNet NCPs on SPI | |
 
 Sources: [source][UG489][USF][CPCD]. Both UART protocols default to 115200 baud, 8N1,
-without flow control [source][GSDK]. So a BGAPI bootloader answers no XMODEM, and an XMODEM
-bootloader no BGAPI [inferred][GSDK].
+without flow control [source][GSDK]. Because each build carries one protocol, a BGAPI
+bootloader answers no XMODEM, and an XMODEM bootloader no BGAPI [inferred][GSDK].
 
 ### Entry
 
@@ -342,8 +342,9 @@ block [source][BTBL].
 > The chip then stays in its bootloader [inferred]. Send `20 01 01 01 00` to start the
 > application.
 
-The Bluetooth stack's DFU mode uses the bootloader's baud rate [source][GSDK]. So an NCP and
-its bootloader must share one rate for a single-rate host tool to reach both [inferred].
+The Bluetooth stack's DFU mode uses the bootloader's baud rate [source][GSDK]. An NCP and its
+bootloader must therefore share one rate for a single-rate host tool to reach both
+[inferred].
 Silicon Labs' `bt_host_uart_dfu` has these limits [source][GSDK][SISDK]:
 
 - **Rate:** builds from Gecko SDK and Simplicity SDK 2024.6 accept 115200 baud at most.
@@ -383,8 +384,8 @@ and a bootloader travel in separate GBL files [source][UG489].
 | Encryption | AES-128 in CTR mode, though the header flag is named AESCCM | No: `BOOTLOADER_ENFORCE_ENCRYPTED_UPGRADE` is 0 |
 
 Sources: [source][UG489][GSDK]. A bootloader that requires no signature still verifies a
-signature tag it finds [source][UG489]. So a signed file fails on a bootloader that holds no
-matching key [inferred].
+signature tag it finds [source][UG489]. A signed file therefore fails on a bootloader that
+holds no matching key [inferred].
 
 ### Bootloader upgrade
 
@@ -404,7 +405,7 @@ follows the bootloader GBL [source][UG489].
 > [!CAUTION]
 > **A refused bootloader upgrade is silent.** `dfu_flash_upload_finish` answers success
 > before the version and Secure Engine checks run [source][GSDK]. The old bootloader stays,
-> and the application's first page is already erased. So the chip restarts in its
+> and the application's first page is already erased. The chip therefore restarts in its
 > bootloader with reason BADAPP [inferred]. Send an application GBL to recover.
 
 Four conditions refuse an unsigned bootloader upgrade [source][GSDK][RTSL]:
@@ -434,8 +435,8 @@ major 3 begins with Simplicity SDK 2024.12.0 [source][GSDK][SISDK]:
 | Simplicity SDK 2025.6 | 3.1 |
 
 The customer field is the one a build raises to replace a bootloader of equal major and minor
-[source][UG489]. The running bootloader compares the whole 32-bit value [source][GSDK]. So
-once a 3.x bootloader is in place, no Gecko SDK bootloader can follow it as a GBL
+[source][UG489]. The running bootloader compares the whole 32-bit value [source][GSDK]. With
+a 3.x bootloader in place, no Gecko SDK bootloader can follow it as a GBL
 [inferred][T3769]. One poster patched the version check out of the new image and still saw
 the upgrade refused [reported][T3769]. The check that runs is the installed bootloader's
 [source][GSDK].
@@ -496,7 +497,7 @@ command error by default instead [source][SISDK].
   `spinel+hdlc+uart:///dev/ttyS1?uart-baudrate=460800`. Its options include
   `uart-flow-control` and `enable-coex` [source][OT].
 - **CPC:** `cpcd` encrypts the link with AES-GCM by default. `disable_encryption` needs an RCP
-  built without CPC security [source][CPCD][GTX].
+  built without CPC security [source][CPCD], [reported][GTX].
 - **CPC framing:** without byte stuffing, a resynchronizing receiver can take payload bytes
   for a header. The daemon's documentation advises security or SPI [source][CPCD].
 
@@ -534,8 +535,8 @@ through the "RAIL Utility, Coexistence" component, whose pins sit in
 
 If a build maps no pin to GRANT, the radio treats GRANT as always asserted [source][COEX].
 With PTA on and GRANT never asserted, Bluetooth transmits nothing and still receives
-[source][COEX]. 802.15.4 checks GRANT at the end of CCA [source][COEX]. So its transmissions
-fail and retry [inferred].
+[source][COEX]. 802.15.4 checks GRANT at the end of CCA [source][COEX]. An 802.15.4
+transmission therefore fails and retries [inferred].
 
 > [!CAUTION]
 > **Enable PTA only where the Wi-Fi side drives GRANT.** Otherwise the radio receives and
@@ -546,8 +547,8 @@ fail and retry [inferred].
 
 The EFR32BG21 errata, for the same xG21 die, lists HFXO_E301. Setting the HFXO's
 `DISONDEMAND` bit while it runs, then a system reset request, can hang the chip until a pin
-reset [source][BG21E]. That the erratum holds for the MG21 is [inferred]: the MG21's own
-errata was not available.
+reset [source][BG21E]. The MG21 shares the die, so the erratum applies to it [inferred]. The
+MG21's own errata document is not among the sources.
 
 ## Sources
 

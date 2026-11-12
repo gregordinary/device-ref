@@ -173,8 +173,7 @@ Linux loads these files from `/lib/firmware/mediatek/mt7996/` [reported][B393]:
 | `mt7996_dsp.bin` | DSP image, 6 regions: one image loaded per band |
 | `mt7996_wa.bin` | WA image, 3 regions |
 
-`_233` variants of each file also ship [reported][B393]. The containers' format comes from
-[source][SDR]:
+`_233` variants of each file also ship [reported][B393]. The containers and their checks:
 
 - **Encryption:** AES-128-CBC with an all-zero key and IV, reset per region. Region feature
   bit 0 marks an encrypted region [source][SDR].

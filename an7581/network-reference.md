@@ -2,8 +2,8 @@
 
 This document covers the AN7581's packet path and its known defects. The path runs through
 the frame engine and its GDM ports, two QDMA engines and an internal switch. It also runs
-through the 10G ports' PCS blocks, the PPE flow engine and the NPU. The reader is writing a device tree for an
-AN7581 board, or deciding which offloads to trust on one. The
+through the 10G ports' PCS blocks, the PPE flow engine and the NPU. The reader is writing a
+device tree for an AN7581 board, or deciding which offloads to trust on one. The
 [system reference](system-reference.md) covers the rest of the SoC.
 
 Conditions: the facts rest on one board, the Gemtek W1700K, under OpenWrt's 6.12 and 6.18
@@ -45,19 +45,13 @@ QDMA [reported][T626][T2599].
 The driver uses QDMA0 for the LAN side and QDMA1 for the WAN side. Each QDMA has 32 receive
 rings and two transmit-completion contexts, and raises its interrupts on four banks. Linux
 names them `airoha_eth.0` to `airoha_eth.7` [source][ACK72]. The driver exposes no receive
-hashing to spread one ring's flows across CPUs [source][ACK72].
-
-The tree reserves DRAM for both QDMAs [source][DTSI]:
-
-| Region | Start | Size |
-|---|---|---|
-| `qdma0-buf` | `0x8700_0000` | 32 MiB |
-| `qdma1-buf` | `0x8900_0000` | 16 MiB |
+hashing to spread one ring's flows across CPUs [source][ACK72]. The tree reserves DRAM for
+each QDMA's buffers (see the system reference's [memory map](system-reference.md#memory)).
 
 ### Receive offloads
 
 QDMA's large-receive engine serves 8 queues, receive rings 24 to 31. One interface per QDMA
-can use it at a time, and it is off by default [source][ACK72][T3524]. With LRO, one TCP
+can use it at a time, and it is off by default [source][ACK72], [reported][T3524]. With LRO, one TCP
 stream reaches about 8.1 Gb/s, against about 2.7 Gb/s with software GRO
 [reported][T3524].
 
@@ -139,8 +133,8 @@ Bits 5 and 4 of offset 0 enable TX and RX flow control [source][ACK72].
 ## PPE
 
 The PPE binds a flow after a set number of packets. `REG_PPE_BIND_RATE` holds 30 (`0x1e`)
-[reported][T3890]. A threshold of 8 cut a loaded network's 90th-percentile latency from 157 ms to
-15 ms [reported][T3890]. The PPE handles NAT, VLAN tags and PPPoE [reported][T2599].
+[reported][T3890]. A threshold of 8 cut a loaded network's 90th-percentile latency from
+157 ms to 15 ms [reported][T3890]. The PPE handles NAT, VLAN tags and PPPoE [reported][T2599].
 
 A bound IPv6 flow rewrites its source MAC from a slot table rather than the entry. GDM base
 slots are 1 to 4, and slot 15 preserves the source MAC. The pool holds at least 11 more
@@ -193,8 +187,7 @@ ran Wi-Fi offload [reported][B397][B398].
 **Description:** the Ethernet PCS's PLL can settle in the wrong VCO band. The analog block's
 `TCLVAR` field at `0x1fa7_a030` reads `0x0000_301b` in that state.
 
-**Conditions:** `lan2` on some W1700K HW1.x units, mostly at a cold power-on. OpenWrt main
-of 2026-08-26 carries the unpatched code.
+**Conditions:** `lan2` on some W1700K HW1.x units, mostly at a cold power-on.
 
 **Symptom:** `lan2` shows no link after boot. A cable replug does not help.
 

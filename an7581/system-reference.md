@@ -13,7 +13,7 @@ No reference unit has been probed yet. Every claim is `[source]`, `[consensus]` 
 
 | Property | Value |
 |---|---|
-| Part | Airoha AN7581, formerly EcoNet EN7581. Seen as AN7581GT |
+| Part | Airoha AN7581, also named EcoNet EN7581. Marked AN7581GT |
 | CPU | 4x Arm Cortex-A53 r0p4, one cluster, 1200 MHz |
 | Interrupt controller | GICv3 |
 | Memory | DDR4, from `0x8000_0000` |
@@ -152,9 +152,10 @@ The map lists the blocks OpenWrt's tree describes [source][DTSI]:
 Sources: [source][DTSI].
 
 > [!CAUTION]
-> **The `en7523-uart` ports run at twice the requested baud on OpenWrt 6.18.** Asking for
-> 230400 gives 115200 on uart2, and asking for 460800 gives 921600 on hsuart3
-> [reported][T3788][T3804]. Set the divider for the rate the line needs.
+> **The `en7523-uart` ports run at the wrong baud for some settings on OpenWrt 6.18.** Asking
+> for 230400 gives 115200 on uart2. On hsuart3, asking for 460800 gives 921600, while 230400
+> gives 230400 [reported][T3788][T3804]. Measure the rate a setting gives before relying on
+> it.
 
 ## GPIO and pin mux
 
@@ -162,16 +163,13 @@ The GPIO controller and the PWM share the block at `0x1fbf_0200`. Inputs read at
 `0x1fbf_0204` for GPIO0-31 and `0x1fbf_0270` for GPIO32-63 [reported][T3983]. A fix for
 edge-triggered GPIO interrupts entered Linux 6.18.52 [reported][T3983].
 
-The chip SCU's register at `0x1fa2_0214` selects pin functions. Its reset value `0x0000_4028`
-enables the MDIO master and the LED functions of two switch ports [reported][T3737]:
+The chip SCU's register at `0x1fa2_0214` selects pin functions. A value of `0x0000_4028` sets
+three bits, 3, 5 and 14: the MDIO master, and the LED0 function of two switch ports. Those
+LED functions take pins that the UARTs also use [reported][T3737]. Writing `0x4020` with
+`devmem` clears bit 3 and brings up a GNSS receiver on the HSUART. Writing `0x4000` clears
+bits 3 and 5, with the same result [reported][T3731][T3740].
 
-| Bit | Function |
-|---|---|
-| 3 | uart2 |
-| 5 | hsuart |
-
-Posters enabled the HSUART for a GNSS receiver by writing `0x4000` or `0x4020` to it with
-`devmem` [reported][T3731][T3740]. Bit 3 of the register at `0x1fb0_009c` routes the USB2
+Bit 3 of the register at `0x1fb0_009c` routes the USB2
 SerDes. It must be 0 for pcie2 to use that SerDes [reported][T276][T280].
 
 ## PCIe

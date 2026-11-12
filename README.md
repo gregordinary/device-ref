@@ -30,7 +30,7 @@ The tree is ordered by SoC > Family > Board:
 | Document | Subject |
 |---|---|
 | [`rk3576/hardware-design-guide.md`](rk3576/hardware-design-guide.md) | What Rockchip's hardware design guide says that changes a software decision |
-| [`rk3576/boot-firmware.md`](rk3576/boot-firmware.md) | BL31, OP-TEE, the download key and the reboot modes |
+| [`rk3576/boot-firmware.md`](rk3576/boot-firmware.md) | BL31, OP-TEE, the partitions u-boot scans, the download key and the reboot modes |
 | [`rk3576/rockusb-reference.md`](rk3576/rockusb-reference.md) | The rockusb gadget, mode detection and the 32 MiB read wall |
 | [`rk3576/display-reference.md`](rk3576/display-reference.md) | The HDMI display path at register level |
 | [`rk3576/video-reference.md`](rk3576/video-reference.md) | Decode, RGA, the GPU and the 10-bit ceiling |
@@ -47,7 +47,7 @@ The tree is ordered by SoC > Family > Board:
 
 | Document | Subject |
 |---|---|
-| [`rk3588/boot-firmware.md`](rk3588/boot-firmware.md) | The boot chain, BL31's PSCI, SCMI and SiP services, and u-boot's handoff to a bare-metal program |
+| [`rk3588/boot-firmware.md`](rk3588/boot-firmware.md) | The boot chain, USB download mode, the partitions u-boot scans, BL31's PSCI, SCMI and SiP services, and u-boot's handoff to a bare-metal program |
 | [`rk3588/cpu-reference.md`](rk3588/cpu-reference.md) | The cores, their ID registers and numbering, the caches and their latency, coherency, errata, operating points and the frequency the cores deliver |
 | [`rk3588/system-reference.md`](rk3588/system-reference.md) | The address map, the GIC-600, the timers, the UARTs, the TRNG, the IOMMUs, the DMA controllers, DRAM bandwidth and the thermal sensors |
 | [`rk3588/system-sleep.md`](rk3588/system-sleep.md) | The PMU's wake sources, the PMU timer, and BL31's `SYSTEM_SUSPEND` |

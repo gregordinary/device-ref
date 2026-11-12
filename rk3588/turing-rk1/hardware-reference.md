@@ -431,13 +431,10 @@ Built from `turing-rk1-rk3588_defconfig`, u-boot 2026.10 keeps its environment n
 `mmc1 mmc0 nvme scsi usb pxe dhcp spi` [source][UBOOT]. The reference unit's console shows
 both [measured, 2026-10-08, u-boot 2026.10][UBOOTENV].
 
-`bootflow scan` looks only at bootable partitions [source][UBOOT]. A bootable GPT partition
-carries the legacy BIOS bootable attribute, bit 2, or the EFI system partition's type
-GUID. With no such partition on a disk, the scan reads partition 1
-alone. It logs each skipped partition at debug level only, so the console shows nothing.
-
-> **Mark the partition that holds `extlinux.conf` bootable, or place it first.** Otherwise
-> u-boot passes over it in silence.
+`bootflow scan` reads only the partitions marked bootable. With none marked, it reads
+partition 1 alone [source][UBOOT].
+[The partitions u-boot scans](../boot-firmware.md#the-partitions-u-boot-scans) gives the
+rule, and the trap it sets for a root that is not partition 1.
 
 An `extlinux.conf` label with no `fdt` or `fdtdir` line boots with u-boot's own control
 FDT, from `fdtcontroladdr` [source][UBOOT]. A kernel package that ships no device trees

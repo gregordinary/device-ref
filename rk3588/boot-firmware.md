@@ -1,10 +1,11 @@
 # RK3588 boot firmware
 
 This document covers the RK3588 boot firmware from the side of an engineer porting a
-bootloader or an operating system. It describes the boot chain and its blobs, and the
-services Rockchip's BL31 answers: PSCI, SCMI and its SiP calls. It also covers the memory
-the firmware keeps and the accesses it refuses the non-secure world. It closes with the
-state mainline u-boot leaves for a program it starts.
+bootloader or an operating system. It describes the boot chain and its blobs, the BootROM's
+USB download mode, and the partitions mainline u-boot scans. It then describes the services
+Rockchip's BL31 answers: PSCI, SCMI and its SiP calls. It also covers the memory the
+firmware keeps and the accesses it refuses the non-secure world. It closes with the state
+mainline u-boot leaves for a program it starts.
 
 The document is SoC-level. Hardware behavior is measured on the reference unit, a Turing
 RK1, running rkbin's DDR firmware v1.24 and BL31 v1.56 under mainline u-boot 2026.10.
@@ -14,6 +15,9 @@ are owned by the [RK3588 system sleep reference](system-sleep.md).
 
 Some Linux readings come from a second RK1 module, running DDR firmware v1.19 and BL31 v1.51
 under u-boot 2026.07. The text names that firmware wherever it cites them.
+
+The USB download mode's descriptors come from two other boards, a Fydetab Duo and a
+NanoPi R6S, both on the RK3588S. The text names the board wherever it cites them.
 
 ## The boot chain
 
@@ -61,6 +65,72 @@ The reference unit's eMMC carries both stages at these offsets [measured]. Nothi
 this layout reserves the space, so a partition table must start its first partition
 above the FIT. The [RK1's boot and recovery](turing-rk1/hardware-reference.md#boot-and-recovery)
 section names a case that breaks this rule.
+
+### USB download mode
+
+Maskrom is the BootROM's download over USB OTG [source][TRM]. A host sends it a loader as
+vendor control requests on endpoint 0, request `0x0c`, in 4096-byte transfers with a
+CRC-CCITT after the last [source][RKDT]. The first stage goes to index `0x471` and the
+second to index `0x472`. rkbin's RK3588 loader sends its DDR firmware first and its usbplug
+second [source][RKBIN]. The usbplug then answers rockusb commands, 31-byte command blocks on
+the bulk endpoints [source][RKDT].
+
+The [RK1's boot and recovery](turing-rk1/hardware-reference.md#boot-and-recovery) section
+names that board's route into maskrom. On a Fydetab Duo, the BootROM enumerates with these
+descriptors [reported][FYDETAB]:
+
+```
+idVendor 0x2207, idProduct 0x350b, bcdUSB 2.00, bcdDevice 1.00
+No manufacturer, product or serial string
+bDeviceClass 0, one configuration
+Interface 0, alternate 0: class 0xFF (vendor), subclass 0x06, protocol 0x05
+  EP 0x81 IN  bulk, wMaxPacketSize 512
+  EP 0x02 OUT bulk, wMaxPacketSize 512
+```
+
+A NanoPi R6S's BootROM also presents no string descriptor [reported][R6S].
+
+The BootROM answers no rockusb command. On the Fydetab Duo, five 31-byte command blocks
+written to the bulk OUT endpoint each fail with a transfer error, before any data stage.
+Rockchip's `upgrade_tool` fails the same way [reported][FYDETAB]. The RK3576 BootROM
+behaves alike, as its [mode detection](../rk3576/rockusb-reference.md#mode-detection)
+describes.
+
+A loader presents string descriptors. On the NanoPi R6S, the usbplug names `RockChip`,
+`USB-MSC` and `rockchip` as its manufacturer, product and serial [reported][R6S]. It keeps
+the BootROM's even `bcdUSB`, so the low bit of `bcdUSB` does not tell the two apart
+[reported][R6S]. The string descriptors do, without a transfer.
+
+fydetab-flash-web reports that one command block sent to the BootROM before the download
+boot spoils the power cycle. The BootROM then refuses the upload at its first block until
+power is cycled [reported][FYDETAB]. The same project also names a mismatched loader as a cause of that
+refusal, so the mechanism is not isolated.
+
+> **Tell maskrom from a loader by its string descriptors, and send maskrom only the
+> download boot.**
+
+### The partitions u-boot scans
+
+Mainline u-boot reads a boot configuration only from a partition marked bootable
+[source][UBOOT]. `bootflow scan` sets `BOOTFLOWIF_ONLY_BOOTABLE`, and the block bootdev
+then skips every partition that is not bootable. The older `distro_bootcmd` lists the
+bootable partitions with `part list <dev> -bootable devplist`, and scans those. On a disk
+with no partition marked, both read partition 1 alone.
+
+A bootable GPT partition carries the legacy BIOS bootable attribute, bit 2, or the EFI
+system partition's type GUID [source][UBOOT]. The extlinux, script and EFI boot
+methods keep to the bootable partitions. The Android, ChromeOS and RAUC boot methods read
+any partition. Standard boot logs each skipped partition at debug level only, so the
+console shows nothing.
+
+A disk whose partition 1 holds firmware therefore boots nothing until a partition is marked
+[inferred]. Rockchip's Android layout starts that way, as the
+[H96 MAX M9's partition map](../rk3576/h96-max-m9/hardware-reference.md#as-shipped-emmc-partition-map)
+shows. The [RK3576 boot firmware](../rk3576/boot-firmware.md#the-partitions-u-boot-scans)
+records the failure measured on a mainline layout.
+
+> **Mark the partition that holds `extlinux.conf` bootable, or make it partition 1.**
+> Otherwise u-boot passes over it in silence.
 
 ## Memory the firmware keeps
 
@@ -396,10 +466,26 @@ Citation keys:
   `split-elf` BL31 images), `arch/arm/mach-rockchip/Kconfig` (`SPL_TEXT_BASE`), and the
   `CONFIG_SPL_MAX_SIZE` of the 30 RK3588 board configurations. `configs/turing-rk1-rk3588_defconfig` and
   `arch/arm/mach-rockchip/Kconfig`, which neither enable nor imply a watchdog.
+  `cmd/bootflow.c` (`do_bootflow_scan`), `boot/bootdev-uclass.c` (`bootdev_find_in_blk`),
+  `disk/part.c` (`part_get_bootable`), `disk/part_efi.c` (`get_bootable`) and
+  `include/config_distro_bootcmd.h`. `boot/bootmeth_android.c`, `bootmeth_cros.c` and
+  `bootmeth_rauc.c`, the boot methods that set `BOOTMETHF_ANY_PART`. The same lines read
+  identically at tag `v2026.10`.
 - `[DTS]`: Linux `arch/arm64/boot/dts/rockchip/rk3588-base.dtsi` at tag `v7.2.9`.
 - `[RKBIN]`: rockchip-linux/rkbin, `doc/release/RK3588_EN.md`, the entry for
   `rk3588_ddr_lp4_2112MHz_lp5_2400MHz_v1.20.bin` (2025-08-25). Its one new item adds
-  support for 2-channel DDR, and with it requires BL31 v1.53 or later.
+  support for 2-channel DDR, and with it requires BL31 v1.53 or later. Its
+  `RKBOOT/RK3588MINIALL.ini` at commit `ecb4fcb` names the DDR firmware as the loader's
+  `CODE471` stage and the usbplug as its `CODE472` stage.
+- `[RKDT]`: rockchip-linux/rkdeveloptool at commit `304f073`: `RKComm.cpp`
+  (`RKU_DeviceRequest`, the download boot's control transfers, and `RKU_TestDeviceReady`,
+  one command block) and `RKDevice.cpp` (`DownloadBoot`).
+- `[FYDETAB]`: fydetab-flash-web, a browser flasher for the Fydetab Duo,
+  https://github.com/SilenWang/fydetab-flash-web, at commit `7e5eb25` (GPL-2.0). Its
+  `internal/rockusb/testdata/maskrom.device.json` and `maskrom-cbw-stall.json` carry the
+  descriptors and five refused command blocks, captured from a Fydetab Duo on 2026-10-25.
+  Its `docs/protocol-notes.md` and `docs/device-commands.md` give the first-command rule
+  and the mismatched-loader refusal.
 - `[BLOBS]`: rockchip-linux/rkbin's `bin/rk35/rk3588_bl31_v1.42.elf`, `v1.45`, `v1.48`,
   `v1.51` and `v1.56`: the entry address and load segments of each ELF's program headers.
 - `[YSP]`: Yi Ding, rock-5b-ysp, https://github.com/yisding/rock-5b-ysp, at commit
@@ -441,3 +527,8 @@ eMMC carries u-boot 2026.07, BL31 v1.51 and DDR firmware v1.19:
 - `[BOOTLOG]`: the kernel log of a boot of Linux 7.2.9, 2026-10-05, read from the journal.
 - `[IDLE]`: each core's `cpuidle` statistics under `/sys/devices/system/cpu`, read after
   17.8 days of uptime, 2026-10-23.
+
+A capture from another RK3588 board, kept with its evidence outside this repository:
+
+- `[R6S]`: pyrographer's USB descriptor readings of a NanoPi R6S, an RK3588S board, in
+  maskrom and after a loader upload, as pyrographer reported them on 2026-11-11.

@@ -51,8 +51,8 @@ read is `cmp`-identical between them [measured].
 
 ## Mode detection
 
-Classify the mode by capability: probe whether rockusb commands are answered. The low bit
-of `bcdUSB` does not identify the mode on the RK3576.
+Classify the mode by the string descriptors, which the BootROM does not present. The low
+bit of `bcdUSB` does not identify the mode on the RK3576.
 
 The rkdeveloptool source and the Rockchip wiki read the low bit of `bcdUSB` as the mode
 flag, even for maskrom and odd for a loader. With the rkbin SPL loader the flag never
@@ -73,10 +73,17 @@ flag still cannot be trusted, because one of the two loaders an RK3576 board can
 misreports it. It also says nothing about whether reads are truthful: the correctly flagged
 factory gadget carries [the 32 MiB read wall](#the-32-mib-read-wall).
 
-The reliable classifier is a probe command. A loader answers `TEST_UNIT_READY` and `rfi`,
-while maskrom's bulk endpoints are decorative and fault the first transfer. The descriptor
-fields in [The download gadget](#the-download-gadget) are candidate list-time classifiers,
-pending more boards. The interface class triple is not one.
+The string descriptors classify without a transfer. Maskrom presents none, and the rkbin
+SPL loader presents all three [measured]. Two RK3588 boards show the same split
+[reported], as [USB download mode](../rk3588/boot-firmware.md#usb-download-mode) records.
+The other fields that differ in [The download gadget](#the-download-gadget) are candidate
+classifiers, pending more boards. The interface class triple is not one.
+
+A probe command also classifies. A loader answers `TEST_UNIT_READY` and `rfi`, while
+maskrom's bulk endpoints are decorative and fault the first transfer [measured]. On the
+RK3588, one command block sent to the BootROM is reported to make it refuse the next upload
+until a power cycle [reported]. Whether the RK3576 BootROM does the same is not measured.
+Send a probe only to a device that presents string descriptors.
 
 ### Upload behaviors
 

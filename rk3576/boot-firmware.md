@@ -1,10 +1,11 @@
 # RK3576 boot firmware
 
 This document covers the RK3576 boot firmware from the side of an engineer porting a
-bootloader or an operating system. It describes the boot chain and its blobs, OP-TEE under
-mainline u-boot, and a u-boot configuration trap around the blob variables. It also covers
-the SARADC download key, the reboot-mode registers and what BL31 forwards, and the
-deep-idle wakeup miss under rkbin BL31 v1.24.
+bootloader or an operating system. It describes the boot chain and its blobs, and the
+partitions mainline u-boot scans. It covers OP-TEE under mainline u-boot, and a u-boot
+configuration trap around the blob variables. It also covers the SARADC download key, the
+reboot-mode registers and what BL31 forwards, and the deep-idle wakeup miss under rkbin
+BL31 v1.24.
 
 The document is SoC-level. Hardware behavior is measured on the reference unit, an H96
 MAX M9. Source reading covers the mainline u-boot v2026.04 and Linux 7.1 trees [source].
@@ -30,6 +31,21 @@ There is no separate DDR4 file. 2112 MHz is the loader's native LPDDR4X target.
 rkbin's newest RK3576 BL31 is v1.25. The reference unit's vendor firmware runs BL31 v1.09
 with OP-TEE. Under mainline u-boot the reference unit runs rkbin BL31 v1.24 and DDR
 firmware v1.12, without OP-TEE. Every BL31 measurement on this page is v1.24's.
+
+### The partitions u-boot scans
+
+Mainline u-boot reads a boot configuration only from a partition marked bootable, or from
+partition 1 when no partition is marked. The
+[RK3588 boot firmware](../rk3588/boot-firmware.md#the-partitions-u-boot-scans) states the
+rule and its source.
+
+The reference unit shows the failure [measured, 2026-08-26, u-boot 2026.07]. Its eMMC
+carried a GPT whose root, holding `extlinux.conf`, was partition 2, with no partition
+marked. u-boot's scan found no bootflow on the eMMC, and it stopped at its prompt. With the
+root marked bootable, the same disk boots.
+
+The attribute survives a resize. After `sfdisk -N` grew the root to the end of the eMMC,
+its entry still carried `LegacyBIOSBootable` [measured, 2026-08-26].
 
 ## OP-TEE and BL32
 

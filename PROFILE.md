@@ -91,7 +91,8 @@ to it.
 | RK3576 decode, RGA, GPU and the 10-bit ceiling | `rk3576/video-reference.md` |
 | The RK3576 NPU | `rk3576/npu-reference.md` |
 | The H96 AIC8800D80 Wi-Fi and Bluetooth | `rk3576/h96-max-m9/wifi-bluetooth.md` |
-| The RK3588 boot chain, BL31's PSCI, SCMI and SiP services, and u-boot's handoff | `rk3588/boot-firmware.md` |
+| The RK3588 boot chain, the BootROM's USB download mode, BL31's PSCI, SCMI and SiP services, and u-boot's handoff | `rk3588/boot-firmware.md` |
+| The partitions mainline u-boot scans for a boot configuration | `rk3588/boot-firmware.md` |
 | The RK3588 cores, ID registers, caches, coherency, errata, CPU operating points, delivered frequency and the DSU clock | `rk3588/cpu-reference.md` |
 | The RK3588 address map, GIC, timers, UARTs, TRNG, IOMMUs, DMA controllers, DRAM bandwidth and thermal sensors | `rk3588/system-reference.md` |
 | The RK3588 PMU wake sources, PMU timer and system suspend | `rk3588/system-sleep.md` |

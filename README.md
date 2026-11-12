@@ -1,6 +1,7 @@
 # device-ref
 
-Hardware reference for a set of Rockchip SoCs, board families and boards.
+Hardware reference for a set of SoCs, board families, boards and discrete chips. The chips are
+Rockchip SoCs, the Airoha AN7581, the MediaTek MT7996 and the Silicon Labs EFR32MG21.
 
 ## Layout
 
@@ -9,6 +10,8 @@ The tree is ordered by SoC > Family > Board:
 - SoC folders hold the documents that hold for every board on that SoC.
 - Family folders appear only where several boards share documents, e.g., the Veyron Chromebooks.
 - Board folders holds what is true of that board alone.
+- Chip folders hold what is true of a discrete chip, such as a Wi-Fi chip, on any board that
+  carries it.
 
 ## Documents
 
@@ -55,6 +58,29 @@ The tree is ordered by SoC > Family > Board:
 | [`rk3588/npu-reference.md`](rk3588/npu-reference.md) | The NPU: its cores, power, clock and register-level behavior under the mainline `rocket` driver |
 | [`rk3588/corrections-and-gotchas.md`](rk3588/corrections-and-gotchas.md) | Misstated RK3588 claims, and traps that hold for every board on the SoC |
 | [`rk3588/turing-rk1/hardware-reference.md`](rk3588/turing-rk1/hardware-reference.md) | The Turing RK1: power, memory, storage, Ethernet, USB, console, RTC, boot and recovery |
+
+### AN7581
+
+| Document | Subject |
+|---|---|
+| [`an7581/system-reference.md`](an7581/system-reference.md) | Silicon revisions, the CPU and its operating points, boot security, the address map, UARTs, pin mux, PCIe, thermal and crypto |
+| [`an7581/network-reference.md`](an7581/network-reference.md) | The packet path: GDMs, QDMA, the switch, the PCS blocks, the PPE, the NPU, and the network errata |
+| [`an7581/gemtek-w1700k/hardware-reference.md`](an7581/gemtek-w1700k/hardware-reference.md) | The Gemtek W1700K: revisions, parts, ports, radios, console, power and GPIOs |
+| [`an7581/gemtek-w1700k/boot-and-flash.md`](an7581/gemtek-w1700k/boot-and-flash.md) | The vendor U-Boot, the vendor bad-block area, the stock and OpenWrt flash layouts, the chainloader and the installer |
+| [`an7581/gemtek-w1700k/openwrt-status.md`](an7581/gemtek-w1700k/openwrt-status.md) | What OpenWrt drives on the W1700K, per subsystem |
+| [`an7581/gemtek-w1700k/corrections-and-gotchas.md`](an7581/gemtek-w1700k/corrections-and-gotchas.md) | Misreported W1700K claims, and board traps |
+
+### MT7996
+
+| Document | Subject |
+|---|---|
+| [`mt7996/wifi-reference.md`](mt7996/wifi-reference.md) | The MT7996 and its RF dies: identity, host interface, processors, firmware, calibration EEPROM, and probing hazards |
+
+### EFR32MG21
+
+| Document | Subject |
+|---|---|
+| [`efr32mg21/radio-reference.md`](efr32mg21/radio-reference.md) | The EFR32MG21 Bluetooth LE and 802.15.4 radio as a host's co-processor: identity, memory, security, the Gecko bootloader, host protocols and coexistence |
 
 ## Evidence
 

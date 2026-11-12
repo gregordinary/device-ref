@@ -76,6 +76,10 @@ Claims that are true only inside a boundary:
   rests on that board unless the text says otherwise.
 - A Veyron measurement comes from one C201. A claim about minnie or mickey is `[source]`
   unless it names other evidence.
+- An AN7581, MT7996 or EFR32MG21 claim rests on one board, the Gemtek W1700K, unless the
+  text says otherwise. Until a reference unit is measured, those documents carry `[source]`,
+  `[consensus]` and `[reported]` claims only. A boot log or command output that a community
+  poster took on their own unit is `[reported]`, or `[consensus]` when several agree.
 
 ## Surfaces that repeat one claim
 
@@ -103,6 +107,14 @@ to it.
 | The Veyron boot chain, the payload budget, the factory eMMC layout | `rk3288/veyron/boot-chain.md` |
 | The Veyron initramfs driver chains and the panic timeout | `rk3288/veyron/white-screen.md` |
 | The RK3288 VOP and HDMI ceilings | `rk3288/display-reference.md` |
+| The AN7581 CPU, operating points, boot security, address map, UARTs, pin mux, PCIe, thermal and crypto | `an7581/system-reference.md` |
+| The AN7581 GDMs, QDMA, switch, PCS blocks, PPE, NPU and network errata | `an7581/network-reference.md` |
+| The W1700K revisions, parts, ports, radios, console, power and GPIO assignments | `an7581/gemtek-w1700k/hardware-reference.md` |
+| The W1700K vendor U-Boot, vendor bad-block area, flash layouts, chainloader and installer | `an7581/gemtek-w1700k/boot-and-flash.md` |
+| What OpenWrt drives on the W1700K | `an7581/gemtek-w1700k/openwrt-status.md` |
+| The MT7996 identity, host interface, processors, firmware, eFuse hazard, EEPROM and A-dies | `mt7996/wifi-reference.md` |
+| The EFR32MG21 identity, memory, radio, security, Gecko bootloader, host protocols and coexistence | `efr32mg21/radio-reference.md` |
+| The W1700K's EFR32MG21 wiring, factory firmware and radio environment | `an7581/gemtek-w1700k/hardware-reference.md` |
 
 ## Publishing constraints
 
@@ -132,7 +144,17 @@ pipewire, cpufreq, cpuidle, s2idle, psci, regulator, pmdomain, genpd, armhf, arm
 aarch64, armmp, speedy, minnie, mickey, jerry, jaq, mighty, brain, pinky, fievel, tiger,
 veyron, forky, trixie, sid, x86_64, iommu, dma-buf, dma_heap, nv12, nv15, p010, framemd5,
 zimage, vmlinuz, zstd, xz, lz4, ext4, gpt, postmarketOS, velvet-os, linux-firmware,
-linux-libre.*
+linux-libre, airoha, an7581, en7581, en7523, an7581gt, econet, ecnt, axon, openwrt, luci,
+apk, opkg, sysupgrade, fitblk, ubi, ubifs, ubinfo, ubiformat, ubidetach, ubiattach, ubimkvol,
+ubootenv, ubootenv2, nanddump, mtd0, mtd1, mtd2, tclinux, tclinux_slave, uenv, dsd, bmt, bbt,
+rawb, chainloader, tcboot, tftpboot, iminfo, imgread, xmodem, fip, bl2, bl31, gdm, gdm1,
+gdm2, gdm4, qdma, qdma0, qdma1, ppe, foe, npu, wed, xsi, pcs, serdes, usxgmii, hsgmii, snfi,
+eip93, trng, mt7530, mt7996, mt7996e, mt7976, mt7977, mt76, wfdma, wfsys, cbtop, iwinfo, iw,
+hostapd, wpad, devmem, ethtool, mdio, rtl8261n, rtl8261ce, rtl8261be, nct7802, efr32,
+efr32mg21, ag3352q, ttys0, ttys1, ttys2, uart1, uart5, hsuart, hsuart3, pcie0, pcie1, pcie2,
+i2c0, i2c1, w1700k, w1700k2, w1701k, xr1710g, gemtek, wan, lan2, lan3, lan4, bgapi, ezsp,
+ash, spinel, cpc, cpcd, otbr-agent, ot-ctl, gbl, swd, swo, pti, rtsl, hfxo, ctune, nvm3,
+ser2net, btattach, zigbee2mqtt, j10, mgm210p.*
 
 <!-- prose-lint: on -->
 

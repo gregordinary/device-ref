@@ -102,9 +102,9 @@ the BootROM's even `bcdUSB`, so the low bit of `bcdUSB` does not tell the two ap
 [reported][R6S]. The string descriptors do, without a transfer.
 
 fydetab-flash-web reports that one command block sent to the BootROM before the download
-boot spoils the power cycle. The BootROM then refuses the upload at its first block until
-power is cycled [reported][FYDETAB]. The same project also names a mismatched loader as a cause of that
-refusal, so the mechanism is not isolated.
+boot makes the BootROM refuse the upload at its first block. The refusal lasts until power
+is cycled [reported][FYDETAB]. The same project also names a mismatched loader as a cause
+of that refusal, so the mechanism is not isolated.
 
 > **Tell maskrom from a loader by its string descriptors, and send maskrom only the
 > download boot.**

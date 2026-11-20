@@ -14,7 +14,9 @@ BL31 analysis is a disassembly of the rkbin blob [BLOB]. System sleep and its wa
 are owned by the [RK3588 system sleep reference](system-sleep.md).
 
 Some Linux readings come from a second RK1 module, running DDR firmware v1.19 and BL31 v1.51
-under u-boot 2026.07. The text names that firmware wherever it cites them.
+under u-boot 2026.07. The text names that firmware wherever it cites them. The same module
+also ran mainline TF-A in place of BL31 v1.51, and
+[mainline TF-A as BL31](#mainline-tf-a-as-bl31) compares the two.
 
 The USB download mode's descriptors come from two other boards, a Fydetab Duo and a
 NanoPi R6S, both on the RK3588S. The text names the board wherever it cites them.
@@ -393,6 +395,60 @@ turns the caches off, or hands memory to code that runs with them off [inferred]
 [RK3588 processor reference](cpu-reference.md#cache-maintenance) gives the line counts
 that set and way maintenance walks.
 
+## Mainline TF-A as BL31
+
+Mainline TF-A's RK3588 port runs in place of Rockchip's BL31, with every other stage
+unchanged. On the second RK1 module it ran at tag `v2.16-rc0`, built with `PLAT=rk3588`
+[measured, 2026-11-20, 7.2.9][BOOT1120]. DDR firmware v1.19 and the SPL of u-boot 2026.07
+ran before it. Its version string reads `v2.15.0(release):v2.16-rc0-g9347b8bbd8d5`. The
+release number in it moves only when a release is tagged [source][TFA216].
+
+Its ELF has three load segments, with its entry at `0x4_0000`, where the SPL's cap ends
+[source][TFA216]:
+
+| Segment | Content |
+|---|---|
+| `0x4_0000` to `0x5_d000` | Code and read-only data |
+| `0x5_d000` to `0xd_9000` | Data, stacks, BSS, per-core data and translation tables. The file holds the first `0x2329` bytes |
+| `0xff10_0000` to `0xff10_2000` | The section `.text_pmusram`, code in the PMU's SRAM |
+
+It loads nothing at `0xf_0000`, where Rockchip's BL31 places its `.ddr_m0_bin`
+[source][TFA216][BLOB].
+
+Against BL31 v1.51 on the same module, Linux reads these [measured, 2026-11-20,
+7.2.9][BOOT1120][CLK1120][BOOTLOG][CLK]:
+
+| Reading | BL31 v1.51 | Mainline TF-A |
+|---|---|---|
+| PSCI | 1.1 | 1.1 |
+| SMC Calling Convention | 1.2 | 1.5 |
+| `MIGRATE_INFO_TYPE` | Not supported | Not supported |
+| SMCCC `SOC_ID` | Not implemented | Not implemented |
+| SCMI agent | Protocol 2.0, vendor `rockchip`, firmware version 0 | The same |
+| SCMI clocks | 20 | The same 20, each at the same rate but `scmi_clk_ddr` |
+| `scmi_clk_ddr` | 2112 MHz | 0 |
+| PLL rates | | The same |
+| DRAM Linux finds | `32119716K/33284096K` available, in four System RAM ranges from `0x20_0000` | The same, range for range |
+
+The port registers `SCMI_CLK_DDR` with no clock operations, and its clock service answers a
+rate request for such a clock with 0 [source][TFA216]. No tree node consumes that clock
+[source][DTS], so the reading changes nothing Linux does [inferred].
+
+Linux's PSCI checker passes under this BL31 on two boots [measured, 2026-11-20,
+7.2.9][BOOT1120]. It takes every core but one off and back, then suspends each core ten
+times in `CPU_SLEEP`. Over the first 10.7 minutes of a boot, `psci_idle` held each core in
+`CPU_SLEEP` for 98.8 to 99.2 % of the time [measured, 2026-11-20, 7.2.9][IDLE1120]. After a
+reboot from Linux the board comes back to Linux [measured, 2026-11-20, 7.2.9][BOOT1120].
+
+The TRNG takes its clock and reset from the agent under this BL31 too. It binds as
+`rockchip-rng`, and 1 MiB read from `/dev/hwrng` does not compress under `gzip -9`
+[measured, 2026-11-20, 7.2.9][RNG1120]. On the RK1, whose console is uart9, this BL31 prints
+on uart2, as [UEFI firmware](#uefi-firmware) describes.
+
+DDR firmware v1.19 predates the pairing rkbin sets for v1.20 and later (see
+[the boot chain](#the-boot-chain)). No reading here covers mainline TF-A behind those
+releases.
+
 ## UEFI firmware
 
 The community edk2-rk3588 project builds UEFI firmware for RK3588 boards, which replaces
@@ -455,6 +511,10 @@ Citation keys:
 - `[LINUX]`: Linux at tag `v7.2.9`: `drivers/net/ethernet/stmicro/stmmac/stmmac_platform.c`
   (`stmmac_probe_config_dt`) and `drivers/mmc/host/sdhci-of-dwcmshc.c` (its ACPI match
   table).
+- `[TFA216]`: TrustedFirmware-A at tag `v2.16-rc0`, commit `9347b8bb`:
+  `plat/rockchip/rk3588/drivers/scmi/rk3588_clk.c` (`SCMI_CLK_DDR`, registered with no
+  operations), `plat/rockchip/common/scmi/scmi_clock.c` (the rate reply), and the program
+  headers of the `bl31.elf` that `make PLAT=rk3588 bl31` builds from it.
 - `[TFAMAIN]`: ARM-software/arm-trusted-firmware at commit `5103554` (2026-10-05):
   `plat/rockchip/rk3588/drivers/secure/secure.c` (`sgrf_init`), and
   `plat/rockchip/rk3588/rk3588_def.h` (the secure interrupts).
@@ -527,6 +587,19 @@ eMMC carries u-boot 2026.07, BL31 v1.51 and DDR firmware v1.19:
 - `[BOOTLOG]`: the kernel log of a boot of Linux 7.2.9, 2026-10-05, read from the journal.
 - `[IDLE]`: each core's `cpuidle` statistics under `/sys/devices/system/cpu`, read after
   17.8 days of uptime, 2026-10-23.
+
+Captures from the second module with mainline TF-A `v2.16-rc0` as its BL31, DDR firmware
+v1.19 and u-boot 2026.07, kept with its evidence outside this repository. A SHA-256 of the
+boot area from sector 64 matches that firmware's build:
+
+- `[BOOT1120]`: two boots of Linux 7.2.9 on 2026-11-20, with a reboot from Linux between
+  them. It keeps the first boot's firmware and PSCI checker lines, and the second boot's
+  whole kernel log and `/proc/iomem`. The kernel is built with `CONFIG_ARM_PSCI_CHECKER`.
+- `[CLK1120]`: `/sys/kernel/debug/clk/clk_summary` on the first of those boots.
+- `[IDLE1120]`: each core's `cpuidle` statistics and the uptime, read 10.7 minutes into the
+  second boot.
+- `[RNG1120]`: 1 MiB read from `/dev/hwrng`, compressed with `gzip -9`, and 64 KiB of it
+  counted by byte value, on the first boot.
 
 A capture from another RK3588 board, kept with its evidence outside this repository:
 

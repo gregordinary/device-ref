@@ -790,6 +790,30 @@ offers 300 to 1000 MHz in 100 MHz steps, under `simple_ondemand` [source]. It id
 300 MHz with the rail at 675 mV [measured, 2026-10-23, 7.2.9][CLK]. The `gpu-thermal` zone
 limits it at 85 °C (see [thermal sensors](system-reference.md#thermal-sensors)).
 
+The core clock, `clk_gpu_src`, divides one of five PLLs by an integer: GPLL, CPLL, AUPLL,
+NPLL or SPLL [source]. The tree's clock controller node sets GPLL to 1188 MHz, AUPLL to
+786.432 MHz and NPLL to 850 MHz [source]. The boot firmware leaves CPLL at 1500 MHz
+[measured, 2026-10-23, 7.2.9][CLK]. No divisor of those reaches most operating points, so
+the clock runs below six of the eight [measured, 2026-11-20, 7.2.9][GPUOPP]:
+
+| Operating point | Delivered rate | Parent |
+|---|---|---|
+| 300 MHz | 300 MHz | CPLL / 5 |
+| 400 MHz | 396 MHz | GPLL / 3 |
+| 500 MHz | 500 MHz | CPLL / 3 |
+| 600 MHz | 594 MHz | GPLL / 2 |
+| 700 MHz | 594 MHz | GPLL / 2 |
+| 800 MHz | 786.4 MHz | AUPLL |
+| 900 MHz | 850 MHz | NPLL |
+| 1000 MHz | 850 MHz | NPLL |
+
+The divisor is the ratio of the two rates. The operating point sets the rail's voltage. The
+700, 900 and 1000 MHz points therefore run a lower clock on a higher point's voltage
+[inferred]. At the top two points devfreq reads back a rate its table lacks, and logs
+`Couldn't update frequency transition information` [measured, 2026-11-20, 7.2.9][GPUOPP].
+Every PLL reads the same under Rockchip's BL31 v1.51 and under mainline TF-A, so the table
+holds under either [measured, 2026-11-20, 7.2.9][GPUOPP][CLK].
+
 Two facts matter for planning around the GPU:
 
 - `/dev/dri/renderD128` exists on a headless system with no display attached, and `card0`
@@ -1242,6 +1266,14 @@ outside this repository:
 - `[GPUQUERY]`: a program issuing panthor's `DRM_IOCTL_PANTHOR_DEV_QUERY` for the GPU,
   command stream interface and timestamp information on `/dev/dri/renderD128`, 2026-10-23.
 - `[BOOTLOG]`: the kernel log of the boot, 2026-10-05, read from the journal.
+
+A capture from the same module under Linux 7.2.9 with mainline TF-A v2.16-rc0 as its BL31,
+kept with its evidence outside this repository:
+
+- `[GPUOPP]`: the GPU's devfreq held at each operating point in turn, its minimum and
+  maximum both set to that point, 2026-11-20. At each point, `clk_gpu`'s rate and
+  `clk_gpu_src`'s parent were read from debugfs. The kernel log of the same boot, and its
+  clock tree.
 
 External sources named in the text:
 
